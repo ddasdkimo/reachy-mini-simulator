@@ -1,0 +1,10 @@
+services:
+  reachy-sim:
+    build: .
+    ports:
+      - "8765:8765"
+    environment:
+      - REACHY_MODE=mock
+      # 如需 AI 功能，取消下行註解並填入 API Key
+      # - ANTHROPIC_API_KEY=sk-ant-xxx
+    restart: unless-stopped

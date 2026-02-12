@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reachy_mini_simulator"
+version = "0.1.0"
+description = "Office assistant simulator for Reachy Mini - MockRobot + 2D map navigation + scenario engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pygame",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.scripts]
+reachy-sim = "reachy_mini_simulator.main:main"
+reachy-sim-viz = "reachy_mini_simulator.visualizer:main"
+reachy-sim-web = "reachy_mini_simulator.web_server:main"
+
+[tool.setuptools]
+package-dir = { "" = "." }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+reachy_mini_simulator = ["**/*"]

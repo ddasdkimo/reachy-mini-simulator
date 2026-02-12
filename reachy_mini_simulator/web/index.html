@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reachy Mini 辦公室助手模擬器</title>
+<style>
+/* ── 全域樣式 ───────────────────────────────────── */
+:root {
+  --bg: #1e1e28;
+  --panel-bg: #23262f;
+  --panel-border: #3c4050;
+  --text: #dce1e6;
+  --text-dim: #828794;
+  --text-highlight: #78e6b4;
+  --accent: #50dc7a;
+  --accent-blue: #50b4ff;
+  --person-color: #ffb43c;
+  --event-person: #ffc850;
+  --event-calendar: #b482ff;
+  --event-robot: #50dc96;
+  --event-leave: #ff6464;
+  --event-user: #dce1e6;
+  --cell-empty: #3c3f46;
+  --cell-wall: #505562;
+  --cell-door: #8caac8;
+  --cell-desk: #786446;
+  --cell-chair: #64825a;
+  --cell-charger: #ffdc3c;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC',
+    'Microsoft JhengHei', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* ── 頂部標題列 ──────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+  height: 44px;
+}
+
+.header h1 {
+  font-size: 16px;
+  color: var(--text-highlight);
+  font-weight: 600;
+}
+
+.header .status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.header .status-bar .time {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.header .ws-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4444;
+  transition: background 0.3s;
+}
+
+.header .ws-indicator.connected { background: var(--accent); }
+
+/* ── Tab 列 ─────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.tab-bar .tab {
+  padding: 6px 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab-bar .tab:hover { color: var(--text); }
+.tab-bar .tab.active {
+  color: var(--text-highlight);
+  border-bottom-color: var(--text-highlight);
+}
+
+/* ── 主要佈局 ────────────────────────────────────── */
+.main {
+  display: flex;
+  height: calc(100vh - 44px - 32px);
+}
+
+.map-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+}
+
+.map-area canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+/* 3D 容器 */
+#three-container {
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.panel {
+  width: 340px;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* ── 面板區塊 ────────────────────────────────────── */
+.panel-section {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.panel-section h3 {
+  font-size: 13px;
+  color: var(--text-highlight);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.panel-section .info-row {
+  font-size: 12px;
+  padding: 2px 0;
+  color: var(--text);
+}
+
+.panel-section .info-row .label {
+  color: var(--text-dim);
+  display: inline-block;
+  width: 60px;
+}
+
+.panel-section .info-row.moving { color: var(--accent-blue); }
+.panel-section .info-row.idle { color: var(--text-dim); }
+
+/* ── 控制列 ──────────────────────────────────────── */
+.controls {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--panel-border);
+  flex-wrap: wrap;
+}
+
+.controls button {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.controls button:hover {
+  background: var(--panel-border);
+  color: var(--text-highlight);
+}
+
+.controls button.active {
+  background: var(--text-highlight);
+  color: var(--bg);
+  border-color: var(--text-highlight);
+}
+
+.speed-display {
+  font-size: 12px;
+  color: var(--text-dim);
+  align-self: center;
+  margin-left: 4px;
+}
+
+/* ── 行事曆 ──────────────────────────────────────── */
+.meeting-item {
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.meeting-item.current { color: #ff8282; font-weight: 600; }
+.meeting-item.next { color: var(--text-dim); }
+.meeting-item.future { color: var(--text-dim); opacity: 0.6; }
+
+/* ── 人物列表 ────────────────────────────────────── */
+.person-item {
+  font-size: 12px;
+  color: var(--person-color);
+  padding: 1px 0;
+}
+
+.person-item.empty { color: var(--text-dim); }
+
+/* ── 事件日誌 ────────────────────────────────────── */
+.event-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.event-log::-webkit-scrollbar { width: 4px; }
+.event-log::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+
+.event-log .event {
+  padding: 1px 0;
+  word-break: break-word;
+}
+
+.event-log .event .event-time {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.event-log .event.cat-person .event-msg { color: var(--event-person); }
+.event-log .event.cat-calendar .event-msg { color: var(--event-calendar); }
+.event-log .event.cat-robot .event-msg { color: var(--event-robot); }
+.event-log .event.cat-leave .event-msg { color: var(--event-leave); }
+.event-log .event.cat-user .event-msg { color: var(--event-user); }
+.event-log .event.cat-system .event-msg { color: var(--text-dim); }
+
+/* ── 文字輸入 ────────────────────────────────────── */
+.speak-input {
+  display: flex;
+  padding: 8px 14px;
+  gap: 6px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.speak-input input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  outline: none;
+}
+
+.speak-input input:focus { border-color: var(--text-highlight); }
+.speak-input input::placeholder { color: var(--text-dim); }
+
+.speak-input button {
+  padding: 6px 14px;
+  font-size: 13px;
+  background: var(--text-highlight);
+  color: var(--bg);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.speak-input button:hover { opacity: 0.85; }
+
+/* ── 格子提示 ────────────────────────────────────── */
+.cell-tooltip {
+  position: absolute;
+  background: rgba(35, 38, 47, 0.95);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  pointer-events: none;
+  display: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+/* ── 響應式 ──────────────────────────────────────── */
+@media (max-width: 800px) {
+  .main { flex-direction: column; }
+  .panel {
+    width: 100%;
+    height: 50%;
+    border-left: none;
+    border-top: 1px solid var(--panel-border);
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- 頂部標題列 -->
+<div class="header">
+  <h1>Reachy Mini 辦公室助手模擬器</h1>
+  <div class="status-bar">
+    <span class="time" id="office-time">--:--</span>
+    <span id="sim-info" style="color: var(--text-dim);">模擬秒: 0</span>
+    <div class="ws-indicator" id="ws-indicator" title="WebSocket 狀態"></div>
+  </div>
+</div>
+
+<!-- Tab 列 -->
+<div class="tab-bar">
+  <div class="tab active" data-tab="2d">2D 地圖</div>
+  <div class="tab" data-tab="3d">3D 視覺化</div>
+</div>
+
+<!-- 主要區域 -->
+<div class="main">
+  <!-- 地圖/3D 區域 -->
+  <div class="map-area">
+    <canvas id="map-canvas"></canvas>
+    <div id="three-container"></div>
+    <div class="cell-tooltip" id="cell-tooltip"></div>
+  </div>
+
+  <!-- 右側面板 -->
+  <div class="panel">
+    <!-- 控制 -->
+    <div class="controls">
+      <button id="btn-pause">暫停</button>
+      <button id="btn-resume">繼續</button>
+      <button id="btn-speed-down">-</button>
+      <span class="speed-display" id="speed-display">1.0x</span>
+      <button id="btn-speed-up">+</button>
+      <button id="btn-reset">重啟</button>
+    </div>
+
+    <!-- 機器人狀態 -->
+    <div class="panel-section" id="robot-status">
+      <h3>機器人狀態</h3>
+      <div class="info-row"><span class="label">位置:</span> <span id="robot-pos">--</span></div>
+      <div class="info-row"><span class="label">狀態:</span> <span id="robot-move">--</span></div>
+      <div class="info-row"><span class="label">天線:</span> <span id="robot-ant">--</span></div>
+      <div class="info-row"><span class="label">頭部:</span> <span id="robot-head">--</span></div>
+    </div>
+
+    <!-- 行事曆 -->
+    <div class="panel-section" id="calendar-section">
+      <h3>行事曆</h3>
+      <div id="calendar-list"></div>
+    </div>
+
+    <!-- 人物 -->
+    <div class="panel-section" id="persons-section">
+      <h3>辦公室人物</h3>
+      <div id="persons-list"></div>
+    </div>
+
+    <!-- 事件日誌 -->
+    <div class="event-log" id="event-log">
+      <div class="event cat-system">
+        <span class="event-time">[--:--]</span>
+        <span class="event-msg">等待連線...</span>
+      </div>
+    </div>
+
+    <!-- 說話輸入 -->
+    <div class="speak-input">
+      <input type="text" id="speak-text" placeholder="對機器人說話..." maxlength="200">
+      <button id="btn-speak">送出</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Reachy Mini 模擬器 Web 前端
+// ═══════════════════════════════════════════════════════════════════
+
+(function() {
+'use strict';
+
+// ── 常數 ────────────────────────────────────────────────────────
+const CELL_SIZE = 40;
+const CELL_COLORS = {
+  0: '#3c3f46', // EMPTY
+  1: '#505562', // WALL
+  2: '#8caac8', // DOOR
+  3: '#786446', // DESK
+  4: '#64825a', // CHAIR
+  5: '#ffdc3c', // CHARGER
+};
+const CELL_NAMES = {
+  0: '空地', 1: '牆壁', 2: '門', 3: '桌子', 4: '椅子', 5: '充電站',
+};
+const WALKABLE = new Set([0, 2, 5]);
+
+// ── 狀態 ────────────────────────────────────────────────────────
+let mapData = null;
+let currentState = null;
+let ws = null;
+let wsReconnectTimer = null;
+let frameCount = 0;
+let animationId = null;
+
+// ── DOM 元素 ────────────────────────────────────────────────────
+const canvas = document.getElementById('map-canvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('cell-tooltip');
+const eventLog = document.getElementById('event-log');
+const wsIndicator = document.getElementById('ws-indicator');
+
+// ── 地圖載入 ────────────────────────────────────────────────────
+async function loadMap() {
+  try {
+    const resp = await fetch('/api/map');
+    mapData = await resp.json();
+    canvas.width = mapData.width * CELL_SIZE;
+    canvas.height = mapData.height * CELL_SIZE;
+  } catch (e) {
+    console.error('無法載入地圖:', e);
+  }
+}
+
+// ── WebSocket 連線 ──────────────────────────────────────────────
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    wsIndicator.classList.add('connected');
+    wsIndicator.title = 'WebSocket 已連線';
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
+  };
+
+  ws.onclose = () => {
+    wsIndicator.classList.remove('connected');
+    wsIndicator.title = 'WebSocket 已斷線';
+    wsReconnectTimer = setTimeout(connectWS, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'state_update') {
+        currentState = msg.state;
+        updateUI(msg.state);
+        if (msg.new_events && msg.new_events.length > 0) {
+          appendEvents(msg.new_events);
+        }
+      }
+    } catch (e) {
+      console.error('WebSocket 訊息解析錯誤:', e);
+    }
+  };
+}
+
+// ── UI 更新 ────────────────────────────────────────────────────
+function updateUI(state) {
+  if (!state) return;
+
+  // 時間
+  document.getElementById('office-time').textContent = state.time.office_time;
+  document.getElementById('sim-info').textContent =
+    `模擬秒: ${Math.round(state.time.sim_time)}`;
+  document.getElementById('speed-display').textContent =
+    `${state.time.speed.toFixed(1)}x${state.time.paused ? ' [暫停]' : ''}`;
+
+  // 機器人狀態
+  const pos = state.robot.position;
+  document.getElementById('robot-pos').textContent =
+    `(${pos[0].toFixed(1)}, ${pos[1].toFixed(1)})`;
+
+  const moveEl = document.getElementById('robot-move');
+  if (state.nav_target) {
+    moveEl.textContent = `\u2192 ${state.nav_target}`;
+    moveEl.className = 'moving';
+  } else {
+    moveEl.textContent = '待命';
+    moveEl.className = 'idle';
+  }
+
+  const ant = state.robot.antenna_pos_deg;
+  document.getElementById('robot-ant').textContent =
+    `L=${ant[1].toFixed(0)}\u00b0  R=${ant[0].toFixed(0)}\u00b0`;
+  document.getElementById('robot-head').textContent =
+    `yaw=${state.robot.head_yaw_deg.toFixed(0)}\u00b0  pitch=${state.robot.head_pitch_deg.toFixed(0)}\u00b0`;
+
+  // 行事曆
+  updateCalendar(state.calendar);
+
+  // 人物
+  updatePersons(state.persons);
+}
+
+function updateCalendar(cal) {
+  const el = document.getElementById('calendar-list');
+  if (!cal || !cal.meetings) {
+    el.innerHTML = '<div class="meeting-item" style="color: var(--text-dim);">(無)</div>';
+    return;
+  }
+
+  let html = '';
+  if (cal.current) {
+    html += `<div class="meeting-item current">&#9654; ${cal.current}</div>`;
+  }
+  if (cal.next) {
+    html += `<div class="meeting-item next">&#9655; ${cal.next}</div>`;
+  }
+  if (!cal.current && !cal.next) {
+    html += '<div class="meeting-item" style="color: var(--text-dim);">(今日無更多會議)</div>';
+  }
+  el.innerHTML = html;
+}
+
+function updatePersons(persons) {
+  const el = document.getElementById('persons-list');
+  if (!persons || Object.keys(persons).length === 0) {
+    el.innerHTML = '<div class="person-item empty">(無人)</div>';
+    return;
+  }
+
+  let html = '';
+  for (const [name, p] of Object.entries(persons)) {
+    html += `<div class="person-item">${name} @ (${p.position[0].toFixed(0)}, ${p.position[1].toFixed(0)})</div>`;
+  }
+  el.innerHTML = html;
+}
+
+function appendEvents(events) {
+  for (const ev of events) {
+    const div = document.createElement('div');
+    div.className = `event cat-${ev.category || 'system'}`;
+    div.innerHTML = `<span class="event-time">[${ev.time}]</span><span class="event-msg">${escapeHtml(ev.message)}</span>`;
+    eventLog.appendChild(div);
+  }
+  eventLog.scrollTop = eventLog.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// ── Canvas 繪製 ────────────────────────────────────────────────
+function renderFrame() {
+  animationId = requestAnimationFrame(renderFrame);
+  if (!mapData) return;
+  frameCount++;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // 背景
+  ctx.fillStyle = '#1e1e28';
+  ctx.fillRect(0, 0, w, h);
+
+  // 繪製格子
+  for (let y = 0; y < mapData.height; y++) {
+    for (let x = 0; x < mapData.width; x++) {
+      const cell = mapData.grid[y][x];
+      ctx.fillStyle = CELL_COLORS[cell] || '#3c3f46';
+      ctx.fillRect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+    }
+  }
+
+  // 格線
+  ctx.strokeStyle = '#32353c';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= mapData.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * CELL_SIZE, 0);
+    ctx.lineTo(x * CELL_SIZE, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= mapData.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * CELL_SIZE);
+    ctx.lineTo(w, y * CELL_SIZE);
+    ctx.stroke();
+  }
+
+  // 具名位置標籤
+  if (mapData.named_locations) {
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(180, 185, 200, 0.6)';
+    for (const [name, loc] of Object.entries(mapData.named_locations)) {
+      const lx = loc.position[0] * CELL_SIZE + CELL_SIZE / 2;
+      const ly = loc.position[1] * CELL_SIZE - 3;
+      ctx.fillText(name, lx, ly);
+    }
+  }
+
+  if (!currentState) return;
+
+  // 導航路徑
+  if (currentState.nav_path && currentState.nav_path.length >= 2) {
+    const pulse = Math.abs(Math.sin(frameCount * 0.06));
+    ctx.strokeStyle = `rgba(80, 180, 255, ${0.3 + 0.2 * pulse})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < currentState.nav_path.length; i++) {
+      const p = currentState.nav_path[i];
+      const px = p[0] * CELL_SIZE + CELL_SIZE / 2;
+      const py = p[1] * CELL_SIZE + CELL_SIZE / 2;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // 路徑點
+    for (const p of currentState.nav_path) {
+      const px = p[0] * CELL_SIZE + CELL_SIZE / 2;
+      const py = p[1] * CELL_SIZE + CELL_SIZE / 2;
+      ctx.fillStyle = `rgba(80, 180, 255, ${0.4 + 0.3 * pulse})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 3 + pulse * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 人物
+  if (currentState.persons) {
+    for (const [name, person] of Object.entries(currentState.persons)) {
+      const px = person.position[0] * CELL_SIZE + CELL_SIZE / 2;
+      const py = person.position[1] * CELL_SIZE + CELL_SIZE / 2;
+      const r = CELL_SIZE * 0.3;
+
+      ctx.fillStyle = '#ffb43c';
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#c88a1e';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // 名稱
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#dce1e6';
+      ctx.fillText(name, px, py + r + 12);
+    }
+  }
+
+  // 機器人
+  const rx = currentState.robot.position[0] * CELL_SIZE + CELL_SIZE / 2;
+  const ry = currentState.robot.position[1] * CELL_SIZE + CELL_SIZE / 2;
+  const bodyR = CELL_SIZE * 0.35;
+
+  // 光暈
+  const glowPulse = 0.7 + 0.3 * Math.abs(Math.sin(frameCount * 0.04));
+  const glowR = CELL_SIZE * 0.6 * glowPulse;
+  const gradient = ctx.createRadialGradient(rx, ry, 0, rx, ry, glowR);
+  gradient.addColorStop(0, `rgba(50, 220, 120, ${0.3 * glowPulse})`);
+  gradient.addColorStop(1, 'rgba(50, 220, 120, 0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(rx, ry, glowR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 主體
+  ctx.fillStyle = '#32dc78';
+  ctx.beginPath();
+  ctx.arc(rx, ry, bodyR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#1eb45a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // 眼睛
+  const eyeOffset = bodyR / 3;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(rx - eyeOffset, ry - eyeOffset / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(rx + eyeOffset, ry - eyeOffset / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 天線
+  const ant = currentState.robot.antenna_pos;
+  for (let i = 0; i < 2; i++) {
+    const sign = i === 0 ? -1 : 1;
+    const angle = i === 0 ? ant[1] : ant[0];
+    const ax = rx + sign * (bodyR * 0.5);
+    const ay = ry - bodyR;
+    const tipX = ax + sign * 6;
+    const tipY = ay - 10 + angle * 8;
+
+    ctx.strokeStyle = '#32dc78';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#64ffa0';
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 朝向指示器
+  const headingRad = currentState.robot.heading * Math.PI / 180;
+  const indDist = bodyR + 5;
+  const indX = rx + Math.cos(headingRad) * indDist;
+  const indY = ry - Math.sin(headingRad) * indDist;
+  ctx.fillStyle = '#c8ffc8';
+  ctx.beginPath();
+  ctx.arc(indX, indY, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── 滑鼠互動 ──────────────────────────────────────────────────
+let hoverCell = null;
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!mapData) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+
+  const gx = Math.floor(mx / CELL_SIZE);
+  const gy = Math.floor(my / CELL_SIZE);
+
+  if (gx >= 0 && gx < mapData.width && gy >= 0 && gy < mapData.height) {
+    hoverCell = [gx, gy];
+    const cell = mapData.grid[gy][gx];
+    const cellName = CELL_NAMES[cell] || '?';
+    const walkable = WALKABLE.has(cell);
+
+    let tipText = `(${gx}, ${gy}) ${cellName}`;
+    if (walkable) tipText += ' [可通行]';
+    else tipText += ' [不可通行]';
+
+    // 檢查具名位置
+    for (const [name, loc] of Object.entries(mapData.named_locations || {})) {
+      if (loc.position[0] === gx && loc.position[1] === gy) {
+        tipText += ` - ${name}`;
+        break;
+      }
+    }
+
+    tooltip.textContent = tipText;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+  } else {
+    hoverCell = null;
+    tooltip.style.display = 'none';
+  }
+});
+
+canvas.addEventListener('mouseleave', () => {
+  hoverCell = null;
+  tooltip.style.display = 'none';
+});
+
+// 左鍵點擊導航
+canvas.addEventListener('click', (e) => {
+  if (!mapData || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+
+  const gx = Math.floor(mx / CELL_SIZE);
+  const gy = Math.floor(my / CELL_SIZE);
+
+  if (gx >= 0 && gx < mapData.width && gy >= 0 && gy < mapData.height) {
+    ws.send(JSON.stringify({ type: 'navigate', x: gx, y: gy }));
+  }
+});
+
+// ── 控制按鈕 ────────────────────────────────────────────────────
+function sendControl(action, value) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const msg = { type: 'control', action };
+  if (value !== undefined) msg.value = value;
+  ws.send(JSON.stringify(msg));
+}
+
+document.getElementById('btn-pause').addEventListener('click', () => sendControl('pause'));
+document.getElementById('btn-resume').addEventListener('click', () => sendControl('resume'));
+document.getElementById('btn-reset').addEventListener('click', () => {
+  sendControl('reset');
+  eventLog.innerHTML = '';
+});
+
+document.getElementById('btn-speed-up').addEventListener('click', () => {
+  if (currentState) {
+    sendControl('speed', Math.min(currentState.time.speed + 0.5, 5.0));
+  }
+});
+
+document.getElementById('btn-speed-down').addEventListener('click', () => {
+  if (currentState) {
+    sendControl('speed', Math.max(currentState.time.speed - 0.5, 0.5));
+  }
+});
+
+// ── 說話輸入 ────────────────────────────────────────────────────
+const speakInput = document.getElementById('speak-text');
+const btnSpeak = document.getElementById('btn-speak');
+
+function doSpeak() {
+  const text = speakInput.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'speak', text, name: '使用者' }));
+  speakInput.value = '';
+}
+
+btnSpeak.addEventListener('click', doSpeak);
+speakInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doSpeak();
+});
+
+// ── Tab 切換 ────────────────────────────────────────────────────
+const tabs = document.querySelectorAll('.tab-bar .tab');
+const threeContainer = document.getElementById('three-container');
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    tabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+
+    const tabName = tab.dataset.tab;
+    if (tabName === '2d') {
+      canvas.style.display = 'block';
+      threeContainer.style.display = 'none';
+    } else if (tabName === '3d') {
+      canvas.style.display = 'none';
+      threeContainer.style.display = 'block';
+      if (typeof initThreeScene === 'function' && !window._threeInitialized) {
+        initThreeScene();
+        window._threeInitialized = true;
+      }
+    }
+  });
+});
+
+// ── 初始化 ──────────────────────────────────────────────────────
+async function init() {
+  await loadMap();
+  connectWS();
+  renderFrame();
+
+  // 初始載入事件
+  try {
+    const resp = await fetch('/api/events');
+    const data = await resp.json();
+    if (data.events) {
+      eventLog.innerHTML = '';
+      appendEvents(data.events);
+    }
+  } catch (e) {
+    console.error('無法載入事件:', e);
+  }
+}
+
+init();
+
+// 全域暴露（供 3D 模組使用）
+window._simState = () => currentState;
+window._mapData = () => mapData;
+
+})();
+</script>
+
+<!-- Three.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// 3D 視覺化場景 - Three.js
+// ═══════════════════════════════════════════════════════════════════
+
+function initThreeScene() {
+'use strict';
+
+const container = document.getElementById('three-container');
+const UNIT = 1.0; // 每格 = 1 Three.js 單位
+
+// ── 色彩 ────────────────────────────────────────────────────────
+const COLORS = {
+  floor:   0x2a2d36,
+  wall:    0x505562,
+  door:    0x6888a0,
+  desk:    0x8b7355,
+  chair:   0x5a7a50,
+  charger: 0xccb030,
+  robot:   0x32dc78,
+  robotGlow: 0x50ff90,
+  person:  0xffb43c,
+  path:    0x50b4ff,
+  ambient: 0x404060,
+  grid:    0x32353c,
+};
+
+// ── 場景設定 ────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a24);
+scene.fog = new THREE.FogExp2(0x1a1a24, 0.02);
+
+const camera = new THREE.PerspectiveCamera(
+  50, container.clientWidth / container.clientHeight, 0.1, 200
+);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+// ── 相機控制 ────────────────────────────────────────────────────
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI / 2.1;
+controls.minDistance = 3;
+controls.maxDistance = 40;
+
+// 預設俯瞰位置
+camera.position.set(10, 18, 14);
+controls.target.set(10, 0, 6);
+controls.update();
+
+// ── 燈光 ────────────────────────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(COLORS.ambient, 0.6);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(15, 20, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 50;
+dirLight.shadow.camera.left = -20;
+dirLight.shadow.camera.right = 20;
+dirLight.shadow.camera.top = 20;
+dirLight.shadow.camera.bottom = -20;
+scene.add(dirLight);
+
+const hemiLight = new THREE.HemisphereLight(0x8888cc, 0x444422, 0.3);
+scene.add(hemiLight);
+
+// ── 地圖建構 ────────────────────────────────────────────────────
+let mapBuilt = false;
+
+function buildMap(mapData) {
+  if (mapBuilt || !mapData) return;
+  mapBuilt = true;
+
+  const W = mapData.width;
+  const H = mapData.height;
+
+  // 地板
+  const floorGeo = new THREE.PlaneGeometry(W * UNIT, H * UNIT);
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: COLORS.floor, roughness: 0.9, metalness: 0.1
+  });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(W * UNIT / 2, -0.01, H * UNIT / 2);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 格線
+  const gridHelper = new THREE.GridHelper(
+    Math.max(W, H) * UNIT, Math.max(W, H),
+    COLORS.grid, COLORS.grid
+  );
+  gridHelper.position.set(W * UNIT / 2, 0.01, H * UNIT / 2);
+  gridHelper.material.opacity = 0.15;
+  gridHelper.material.transparent = true;
+  scene.add(gridHelper);
+
+  // 遍歷 grid 建構 3D 物件
+  const wallGeo = new THREE.BoxGeometry(UNIT * 0.95, 1.2, UNIT * 0.95);
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: COLORS.wall, roughness: 0.7
+  });
+
+  const doorGeo = new THREE.BoxGeometry(UNIT * 0.9, 0.9, UNIT * 0.9);
+  const doorMat = new THREE.MeshStandardMaterial({
+    color: COLORS.door, roughness: 0.5, transparent: true, opacity: 0.7
+  });
+
+  const deskGeo = new THREE.BoxGeometry(UNIT * 0.85, 0.4, UNIT * 0.85);
+  const deskMat = new THREE.MeshStandardMaterial({
+    color: COLORS.desk, roughness: 0.6
+  });
+
+  const deskLegGeo = new THREE.BoxGeometry(0.05, 0.3, 0.05);
+  const deskLegMat = new THREE.MeshStandardMaterial({
+    color: 0x555555, roughness: 0.8
+  });
+
+  const chairSeatGeo = new THREE.BoxGeometry(UNIT * 0.5, 0.1, UNIT * 0.5);
+  const chairBackGeo = new THREE.BoxGeometry(UNIT * 0.5, 0.35, 0.06);
+  const chairMat = new THREE.MeshStandardMaterial({
+    color: COLORS.chair, roughness: 0.6
+  });
+
+  const chargerGeo = new THREE.CylinderGeometry(0.15, 0.2, 0.5, 8);
+  const chargerMat = new THREE.MeshStandardMaterial({
+    color: COLORS.charger, roughness: 0.3, metalness: 0.5,
+    emissive: COLORS.charger, emissiveIntensity: 0.3,
+  });
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const cell = mapData.grid[y][x];
+      const px = x * UNIT + UNIT / 2;
+      const pz = y * UNIT + UNIT / 2;
+
+      if (cell === 1) { // WALL
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.position.set(px, 0.6, pz);
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        scene.add(wall);
+      }
+      else if (cell === 2) { // DOOR
+        const door = new THREE.Mesh(doorGeo, doorMat);
+        door.position.set(px, 0.45, pz);
+        scene.add(door);
+      }
+      else if (cell === 3) { // DESK
+        // 桌面
+        const desk = new THREE.Mesh(deskGeo, deskMat);
+        desk.position.set(px, 0.4, pz);
+        desk.castShadow = true;
+        scene.add(desk);
+        // 桌腳
+        const offsets = [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]];
+        for (const [ox, oz] of offsets) {
+          const leg = new THREE.Mesh(deskLegGeo, deskLegMat);
+          leg.position.set(px + ox, 0.15, pz + oz);
+          scene.add(leg);
+        }
+      }
+      else if (cell === 4) { // CHAIR
+        // 坐墊
+        const seat = new THREE.Mesh(chairSeatGeo, chairMat);
+        seat.position.set(px, 0.25, pz);
+        seat.castShadow = true;
+        scene.add(seat);
+        // 椅背
+        const back = new THREE.Mesh(chairBackGeo, chairMat);
+        back.position.set(px, 0.45, pz - 0.22);
+        back.castShadow = true;
+        scene.add(back);
+      }
+      else if (cell === 5) { // CHARGER
+        const charger = new THREE.Mesh(chargerGeo, chargerMat);
+        charger.position.set(px, 0.25, pz);
+        charger.castShadow = true;
+        scene.add(charger);
+
+        // 充電指示燈
+        const indicatorGeo = new THREE.SphereGeometry(0.06, 8, 8);
+        const indicatorMat = new THREE.MeshStandardMaterial({
+          color: 0x00ff00, emissive: 0x00ff00, emissiveIntensity: 1.0
+        });
+        const indicator = new THREE.Mesh(indicatorGeo, indicatorMat);
+        indicator.position.set(px, 0.55, pz);
+        scene.add(indicator);
+      }
+    }
+  }
+}
+
+// ── 機器人 3D 模型 ──────────────────────────────────────────────
+const robotGroup = new THREE.Group();
+scene.add(robotGroup);
+
+// 身體（圓柱）
+const bodyGeo = new THREE.CylinderGeometry(0.3, 0.35, 0.5, 16);
+const bodyMat = new THREE.MeshStandardMaterial({
+  color: COLORS.robot, roughness: 0.4, metalness: 0.3,
+});
+const body = new THREE.Mesh(bodyGeo, bodyMat);
+body.position.y = 0.35;
+body.castShadow = true;
+robotGroup.add(body);
+
+// 頭（球）
+const headGeo = new THREE.SphereGeometry(0.25, 16, 16);
+const headMat = new THREE.MeshStandardMaterial({
+  color: COLORS.robot, roughness: 0.3, metalness: 0.2,
+});
+const head = new THREE.Mesh(headGeo, headMat);
+head.position.y = 0.8;
+head.castShadow = true;
+robotGroup.add(head);
+
+// 眼睛
+const eyeGeo = new THREE.SphereGeometry(0.05, 8, 8);
+const eyeMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.8
+});
+const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+leftEye.position.set(-0.1, 0.82, 0.2);
+robotGroup.add(leftEye);
+
+const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+rightEye.position.set(0.1, 0.82, 0.2);
+robotGroup.add(rightEye);
+
+// 天線
+const antennaMat = new THREE.MeshStandardMaterial({
+  color: COLORS.robot, roughness: 0.5
+});
+const antennaTipMat = new THREE.MeshStandardMaterial({
+  color: COLORS.robotGlow, emissive: COLORS.robotGlow, emissiveIntensity: 0.5
+});
+
+// 左天線
+const leftAntennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.3, 6);
+const leftAntenna = new THREE.Mesh(leftAntennaGeo, antennaMat);
+leftAntenna.position.set(-0.12, 1.1, 0);
+robotGroup.add(leftAntenna);
+
+const leftTipGeo = new THREE.SphereGeometry(0.04, 8, 8);
+const leftTip = new THREE.Mesh(leftTipGeo, antennaTipMat);
+leftTip.position.set(-0.12, 1.28, 0);
+robotGroup.add(leftTip);
+
+// 右天線
+const rightAntenna = new THREE.Mesh(leftAntennaGeo.clone(), antennaMat);
+rightAntenna.position.set(0.12, 1.1, 0);
+robotGroup.add(rightAntenna);
+
+const rightTip = new THREE.Mesh(leftTipGeo.clone(), antennaTipMat);
+rightTip.position.set(0.12, 1.28, 0);
+robotGroup.add(rightTip);
+
+// 機器人底部光暈
+const glowGeo = new THREE.CircleGeometry(0.5, 32);
+const glowMat = new THREE.MeshBasicMaterial({
+  color: COLORS.robot, transparent: true, opacity: 0.15
+});
+const glow = new THREE.Mesh(glowGeo, glowMat);
+glow.rotation.x = -Math.PI / 2;
+glow.position.y = 0.02;
+robotGroup.add(glow);
+
+// ── 人物容器 ────────────────────────────────────────────────────
+const personMeshes = {};
+
+function getPersonMesh(name) {
+  if (personMeshes[name]) return personMeshes[name];
+
+  const group = new THREE.Group();
+
+  // 身體圓柱
+  const pBodyGeo = new THREE.CylinderGeometry(0.18, 0.22, 0.6, 12);
+  const pBodyMat = new THREE.MeshStandardMaterial({
+    color: COLORS.person, roughness: 0.5
+  });
+  const pBody = new THREE.Mesh(pBodyGeo, pBodyMat);
+  pBody.position.y = 0.4;
+  pBody.castShadow = true;
+  group.add(pBody);
+
+  // 頭
+  const pHeadGeo = new THREE.SphereGeometry(0.15, 12, 12);
+  const pHeadMat = new THREE.MeshStandardMaterial({
+    color: 0xffcc88, roughness: 0.6
+  });
+  const pHead = new THREE.Mesh(pHeadGeo, pHeadMat);
+  pHead.position.y = 0.85;
+  pHead.castShadow = true;
+  group.add(pHead);
+
+  // 名稱標籤（使用 Sprite）
+  const labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 128;
+  labelCanvas.height = 32;
+  const lctx = labelCanvas.getContext('2d');
+  lctx.fillStyle = '#ffffff';
+  lctx.font = '18px sans-serif';
+  lctx.textAlign = 'center';
+  lctx.fillText(name, 64, 22);
+  const labelTexture = new THREE.CanvasTexture(labelCanvas);
+  const labelMat = new THREE.SpriteMaterial({
+    map: labelTexture, transparent: true, opacity: 0.8
+  });
+  const label = new THREE.Sprite(labelMat);
+  label.position.y = 1.15;
+  label.scale.set(1.0, 0.25, 1);
+  group.add(label);
+
+  scene.add(group);
+  personMeshes[name] = group;
+  return group;
+}
+
+function removePersonMesh(name) {
+  if (personMeshes[name]) {
+    scene.remove(personMeshes[name]);
+    delete personMeshes[name];
+  }
+}
+
+// ── 導航路徑 ────────────────────────────────────────────────────
+let pathLine = null;
+
+function updatePathLine(navPath) {
+  if (pathLine) {
+    scene.remove(pathLine);
+    pathLine.geometry.dispose();
+    pathLine = null;
+  }
+
+  if (!navPath || navPath.length < 2) return;
+
+  const points = navPath.map(p =>
+    new THREE.Vector3(p[0] * UNIT + UNIT / 2, 0.1, p[1] * UNIT + UNIT / 2)
+  );
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = new THREE.LineBasicMaterial({
+    color: COLORS.path, transparent: true, opacity: 0.6, linewidth: 2
+  });
+  pathLine = new THREE.Line(geometry, material);
+  scene.add(pathLine);
+}
+
+// ── 動畫迴圈 ────────────────────────────────────────────────────
+let threeFrame = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  threeFrame++;
+
+  controls.update();
+
+  const mapData = window._mapData();
+  if (mapData && !mapBuilt) {
+    buildMap(mapData);
+  }
+
+  const state = window._simState();
+  if (state) {
+    // 更新機器人位置
+    const rp = state.robot.position;
+    robotGroup.position.set(
+      rp[0] * UNIT + UNIT / 2,
+      0,
+      rp[1] * UNIT + UNIT / 2
+    );
+
+    // 機器人朝向
+    const headingRad = state.robot.heading * Math.PI / 180;
+    robotGroup.rotation.y = headingRad;
+
+    // 天線動畫
+    const antL = state.robot.antenna_pos[1];
+    const antR = state.robot.antenna_pos[0];
+    leftAntenna.rotation.z = antL * 0.5;
+    leftTip.position.y = 1.28 + antL * 0.1;
+    rightAntenna.rotation.z = -antR * 0.5;
+    rightTip.position.y = 1.28 + antR * 0.1;
+
+    // 光暈呼吸效果
+    const pulse = 0.1 + 0.08 * Math.sin(threeFrame * 0.04);
+    glowMat.opacity = pulse;
+
+    // 天線發光動畫
+    const tipPulse = 0.3 + 0.3 * Math.sin(threeFrame * 0.06);
+    antennaTipMat.emissiveIntensity = tipPulse;
+
+    // 更新人物
+    const currentPersonNames = new Set();
+    if (state.persons) {
+      for (const [name, person] of Object.entries(state.persons)) {
+        currentPersonNames.add(name);
+        const mesh = getPersonMesh(name);
+        mesh.position.set(
+          person.position[0] * UNIT + UNIT / 2,
+          0,
+          person.position[1] * UNIT + UNIT / 2
+        );
+        mesh.visible = true;
+      }
+    }
+    // 移除不再可見的人物
+    for (const name of Object.keys(personMeshes)) {
+      if (!currentPersonNames.has(name)) {
+        removePersonMesh(name);
+      }
+    }
+
+    // 更新路徑
+    updatePathLine(state.nav_path);
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ── 視窗大小調整 ────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  if (container.style.display === 'none') return;
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+});
+
+// 啟動動畫
+animate();
+}
+
+// 暴露至全域供 tab 切換使用
+window.initThreeScene = initThreeScene;
+</script>
+
+</body>
+</html>

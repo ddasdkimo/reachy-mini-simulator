@@ -1,0 +1,10 @@
+[
+  {"time": 0,   "event_type": "person_appears",  "data": {"name": "David",  "position": [15, 2],  "location": "大門"}},
+  {"time": 10,  "event_type": "user_speaks",      "data": {"name": "David",  "text": "早安！"}},
+  {"time": 30,  "event_type": "person_moves",     "data": {"name": "David",  "position": [8, 5],   "location": "辦公桌"}},
+  {"time": 60,  "event_type": "person_appears",   "data": {"name": "Amy",    "position": [15, 2],  "location": "大門"}},
+  {"time": 90,  "event_type": "calendar_event",   "data": {"title": "早會",  "room": "會議室A",    "in_minutes": 5}},
+  {"time": 120, "event_type": "person_leaves",    "data": {"name": "Amy"}},
+  {"time": 180, "event_type": "idle",             "data": {}},
+  {"time": 240, "event_type": "person_appears",   "data": {"name": "訪客",   "position": [15, 2],  "location": "大門"}}
+]
