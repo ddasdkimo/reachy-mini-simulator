@@ -1,7 +1,7 @@
 """Reachy Mini Office Assistant Simulator."""
 
 from .robot_interface import RobotInterface, MediaInterface
-from .ai_brain import AIBrain, BrainResponse, parse_emotion
+from .ai_brain import AIBrain, BrainResponse, parse_emotion, parse_nav_target
 from .audio_input import AudioInput
 from .factory import create_robot
 from .calendar_mock import CalendarMock, Meeting

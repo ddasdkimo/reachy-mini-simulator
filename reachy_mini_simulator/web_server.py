@@ -216,6 +216,10 @@ def _init_simulation() -> None:
         _add_event(f"Robot: {emotion_tag} {resp.text}", "robot")
         if resp.emotion and _expression:
             _expression.trigger_emotion(resp.emotion)
+        if resp.nav_target and _navigator and _robot:
+            success = _navigator.navigate_to(resp.nav_target, from_pos=_robot.position)
+            if success:
+                _add_event(f"AI 導航: → {resp.nav_target}", "robot")
 
     def _on_processing_start() -> None:
         if _expression:

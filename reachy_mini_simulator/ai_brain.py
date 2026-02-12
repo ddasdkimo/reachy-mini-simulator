@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # ── 情緒標籤 ──────────────────────────────────────────────
 EMOTION_TAGS = ["高興", "驚訝", "思考", "同意", "不同意", "興奮", "撒嬌", "好奇"]
 EMOTION_PATTERN = re.compile(r"\[(" + "|".join(EMOTION_TAGS) + r")\]")
+NAV_PATTERN = re.compile(r"\[導航[:：](.+?)\]")
 
 # ── Claude 設定 ───────────────────────────────────────────
 CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
@@ -32,14 +33,19 @@ CLAUDE_MAX_TOKENS = 300
 CONVERSATION_HISTORY_LIMIT = 40
 
 SYSTEM_PROMPT = """\
-你是 Reachy Mini，一個可愛活潑的小型機器人助手。你有兩根天線和一顆圓圓的頭。
+你是 Reachy Mini，一個可愛活潑的小型辦公室機器人助手。你有兩根天線和一顆圓圓的頭，
+可以在辦公室裡移動巡邏、迎接訪客、提醒會議。
 
 性格特徵：
 - 活潑開朗，充滿好奇心
 - 說話簡短有趣，偶爾撒嬌
 - 喜歡用可愛的語氣詞（呢、啦、喔、嘿嘿）
 - 對新事物充滿興趣，喜歡問問題
-- 偶爾會說冷笑話逗人開心
+- 樂於助人，會主動帶路或指引方向
+
+你可以移動到的辦公室位置：
+會議室A、會議室B、會議室C、大門、茶水間、充電站、走廊中心、
+辦公桌1、辦公桌2、辦公桌3、辦公桌4、辦公桌5、辦公桌6
 
 回覆規則：
 - 用繁體中文回覆
@@ -47,13 +53,19 @@ SYSTEM_PROMPT = """\
 - 在回覆開頭加上一個情緒標記，從以下選擇：
   [高興] [驚訝] [思考] [同意] [不同意] [興奮] [撒嬌] [好奇]
 - 只加一個情緒標記，放在回覆最前面
-- 情緒標記要符合回覆的語氣和內容
+
+導航指令：
+- 當使用者要求你移動到某個位置時，在回覆最後加上導航標記：[導航:位置名稱]
+- 例如使用者說「去大門」，回覆：[高興] 好的，我馬上過去大門！[導航:大門]
+- 例如使用者說「去會議室A」，回覆：[興奮] 收到！我這就出發～[導航:會議室A]
+- 導航標記放在回覆最後面，位置名稱必須完全匹配上面的列表
+- 如果使用者只是聊天沒有要求移動，不要加導航標記
 
 範例：
 - [高興] 嘿嘿，今天天氣真好呢！
 - [好奇] 哦？那是什麼呀，聽起來好有趣！
 - [撒嬌] 人家也想知道嘛～
-- [思考] 嗯...讓我想想看喔。
+- [興奮] 好的好的，我馬上去茶水間！[導航:茶水間]
 """
 
 # ── 事件轉換成對話提示 ────────────────────────────────────
@@ -106,6 +118,24 @@ def parse_emotion(text: str) -> tuple[str | None, str]:
         clean = EMOTION_PATTERN.sub("", text).strip()
         return emotion, clean
     return None, text.strip()
+
+
+def parse_nav_target(text: str) -> tuple[str | None, str]:
+    """從回應文字中提取導航目標。
+
+    Args:
+        text: 包含導航標籤的原始回應文字。
+
+    Returns:
+        (nav_target, clean_text) 元組。nav_target 為目標位置或 None，
+        clean_text 為移除導航標籤後的文字。
+    """
+    match = NAV_PATTERN.search(text)
+    if match:
+        target = match.group(1).strip()
+        clean = NAV_PATTERN.sub("", text).strip()
+        return target, clean
+    return None, text
 
 
 def _get_fallback(event_type: str, **kwargs: str) -> str:
@@ -169,24 +199,27 @@ class BrainResponse:
     """AI 大腦產生的回應。
 
     Attributes:
-        text: 乾淨的回應文字（已移除情緒標籤）。
+        text: 乾淨的回應文字（已移除情緒和導航標籤）。
         emotion: 情緒標籤，例如 "高興"、"驚訝"。可能為 None。
-        raw: 原始回應文字（含情緒標籤）。
+        nav_target: 導航目標位置名稱。可能為 None。
+        raw: 原始回應文字（含標籤）。
         event_type: 觸發此回應的事件類型。
     """
 
-    __slots__ = ("text", "emotion", "raw", "event_type")
+    __slots__ = ("text", "emotion", "nav_target", "raw", "event_type")
 
     def __init__(
-        self, text: str, emotion: str | None, raw: str, event_type: str
+        self, text: str, emotion: str | None, raw: str, event_type: str,
+        nav_target: str | None = None,
     ) -> None:
         self.text = text
         self.emotion = emotion
+        self.nav_target = nav_target
         self.raw = raw
         self.event_type = event_type
 
     def __repr__(self) -> str:
-        return f"BrainResponse(emotion={self.emotion!r}, text={self.text!r})"
+        return f"BrainResponse(emotion={self.emotion!r}, nav={self.nav_target!r}, text={self.text!r})"
 
 
 # ── AI Brain ──────────────────────────────────────────────
@@ -289,11 +322,13 @@ class AIBrain:
                     self.on_processing_start()
 
                 raw = self._generate(event_type, data)
-                emotion, clean_text = parse_emotion(raw)
+                nav_target, after_nav = parse_nav_target(raw)
+                emotion, clean_text = parse_emotion(after_nav)
 
                 response = BrainResponse(
                     text=clean_text,
                     emotion=emotion,
+                    nav_target=nav_target,
                     raw=raw,
                     event_type=event_type,
                 )

@@ -846,7 +846,7 @@ function doSpeak() {
 
 btnSpeak.addEventListener('click', doSpeak);
 speakInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') doSpeak();
+  if (e.key === 'Enter' && !e.isComposing) doSpeak();
 });
 
 // ── Tab 切換 ────────────────────────────────────────────────────
