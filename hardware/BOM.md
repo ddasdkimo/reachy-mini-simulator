@@ -2,7 +2,7 @@
 
 > 日期：2026-02-12
 > 總預算：約 NT$ 11,260
-> 底盤方式：3D 列印（Creality K1C, 300mm 圓形底盤）
+> 底盤方式：3D 列印（220×220×250mm 印表機，300mm 圓形底盤四片分割）
 
 ---
 
@@ -89,17 +89,37 @@ ESP32 → Mac: {"x":1.2,"y":3.4,"h":1.57,"ok":true}
 
 ## 3D 列印零件
 
-印表機：Creality K1C (355×355×480mm)
+印表機：220×220×250mm
 材料：PETG（耐衝擊、耐熱）
+設計：300mm 圓形底盤，分割成 4 片列印（每片 ~150×150mm）
+接合方式：拼圖榫互鎖 + M4 夾板固定
 
-| 零件 | 檔案 | 預估列印時間 |
-|------|------|------------|
-| 底板（300mm 圓形） | `chassis.scad` → `RENDER_BASE_PLATE` | 8-12 小時 |
-| 馬達固定座 × 2 | `chassis.scad` → `RENDER_MOTOR_MOUNT` | 1-2 小時 |
-| 第二層板（Mac Mini） | `chassis.scad` → `RENDER_SECOND_LAYER` | 5-8 小時 |
-| LiDAR 頂部支架 | `chassis.scad` → `RENDER_LIDAR_MOUNT` | 2-3 小時 |
+| 零件 | STL 檔案 | 尺寸 | 數量 | 預估列印時間 |
+|------|----------|------|------|------------|
+| 底板 Q1（右後） | `stl/base_q1_right_rear.stl` | ~160×160×12mm | 1 | 2-3 小時 |
+| 底板 Q2（左後） | `stl/base_q2_left_rear.stl` | ~160×160×12mm | 1 | 2-3 小時 |
+| 底板 Q3（左前） | `stl/base_q3_left_front.stl` | ~160×160×12mm | 1 | 2-3 小時 |
+| 底板 Q4（右前） | `stl/base_q4_right_front.stl` | ~160×160×12mm | 1 | 2-3 小時 |
+| 第二層 Q1~Q4 | `stl/layer2_q*.stl` | ~140×140×3mm | 4 | 各 1-2 小時 |
+| 馬達固定座 | `stl/motor_mount.stl` | 49×33×27mm | 2 | 0.5-1 小時 |
+| LiDAR 頂部支架 | `stl/lidar_mount.stl` | 90×90×83mm | 1 | 2-3 小時 |
+| 分割線夾板 | `stl/joint_bracket.stl` | 60×30×3mm | 4 | 各 10 分鐘 |
+| 中心十字夾板 | `stl/center_bracket.stl` | 40×40×3mm | 1 | 10 分鐘 |
 
-OpenSCAD 檔案位置：`hardware/chassis.scad`
+### 組裝五金（底板拼合用）
+- M4×20mm 螺栓 × 12
+- M4 螺帽 × 12
+- M4 墊圈 × 24（選配）
+
+### 組裝步驟
+1. 將 4 片底板的拼圖榫互相對齊，推入卡合
+2. 在底板內側（上方）放置 4 塊直線夾板，跨在分割線上
+3. 在中心放置 1 塊十字夾板
+4. M4 螺栓從上方穿入，底部鎖螺帽固定
+5. 安裝銅柱，放上第二層板（同樣榫接 + 夾板）
+6. 安裝馬達固定座、LiDAR 支架
+
+OpenSCAD 檔案位置：`hardware/chassis.scad`（v3.0 拼圖榫 + 夾板版）
 
 ---
 

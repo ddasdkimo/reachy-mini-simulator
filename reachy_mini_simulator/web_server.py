@@ -49,10 +49,13 @@ except ImportError:
 from .ai_brain import AIBrain, BrainResponse
 from .expression import ExpressionEngine
 from .mock_robot import MockReachyMini
+from .person_detector import MockPersonDetector, PersonDetectorInterface, create_person_detector
+from .proactive import ProactiveTrigger
 from .scenario import ScenarioEngine, SimEvent, SimPerson
 from .office_map import create_default_office, OfficeMap, CellType
 from .navigation import Navigator, a_star, create_default_patrol
 from .calendar_mock import CalendarMock
+from .motion import Move
 
 # ── 全域模擬器狀態 ────────────────────────────────────────────
 
@@ -63,8 +66,17 @@ _navigator: Navigator | None = None
 _calendar: CalendarMock | None = None
 _brain: AIBrain | None = None
 _expression: ExpressionEngine | None = None
+_detector: PersonDetectorInterface | None = None
+_proactive: ProactiveTrigger | None = None
 _event_log: list[dict[str, Any]] = []
+_last_recorded_move: Move | None = None
 _sim_lock = threading.Lock()
+
+# 對話 / 觸發記錄
+_last_trigger_type: str | None = None
+_last_trigger_time: float | None = None
+_last_brain_response: BrainResponse | None = None
+_chat_history: list[dict[str, Any]] = []
 
 # 模擬時間參數
 _OFFICE_START_MINUTES = 8 * 60 + 50  # 08:50
@@ -197,6 +209,8 @@ def _init_simulation() -> None:
     """初始化模擬器各模組。"""
     global _office_map, _robot, _scenario, _navigator, _calendar
     global _brain, _expression, _event_log
+    global _detector, _proactive
+    global _last_trigger_type, _last_trigger_time, _last_brain_response, _chat_history
 
     _office_map = create_default_office()
     charger = _office_map.get_location("充電站")
@@ -210,10 +224,40 @@ def _init_simulation() -> None:
     _brain = AIBrain()
     _expression = ExpressionEngine()
 
+    # 初始化人物偵測器和主動觸發器
+    _detector = MockPersonDetector()
+    _proactive = ProactiveTrigger(detector=_detector)
+
+    _last_trigger_type = None
+    _last_trigger_time = None
+    _last_brain_response = None
+    _chat_history = []
+
+    def _on_proactive_trigger(trigger_type: str, prompt_text: str) -> None:
+        global _last_trigger_type, _last_trigger_time
+        _last_trigger_type = trigger_type
+        _last_trigger_time = time.time()
+        _add_event(f"主動觸發: [{trigger_type}]", "system")
+        if _brain:
+            _brain.inject(prompt_text, f"proactive_{trigger_type}")
+
+    _proactive.on_trigger = _on_proactive_trigger
+    _detector.start()
+    _proactive.start()
+
     # AI 回應回呼
     def _on_brain_response(resp: BrainResponse) -> None:
+        global _last_brain_response
+        _last_brain_response = resp
         emotion_tag = f"[{resp.emotion}]" if resp.emotion else ""
         _add_event(f"Robot: {emotion_tag} {resp.text}", "robot")
+        _chat_history.append({
+            "role": "robot",
+            "text": resp.text,
+            "emotion": resp.emotion,
+            "event_type": resp.event_type,
+            "time": time.time(),
+        })
         if resp.emotion and _expression:
             _expression.trigger_emotion(resp.emotion)
         if resp.nav_target and _navigator and _robot:
@@ -262,13 +306,34 @@ def _simulation_loop() -> None:
 
                 _navigator.update(effective_dt, _robot)
 
-                # 天線呼吸動畫
-                t = _scenario.current_time
-                breath = 0.15 * math.sin(2 * math.pi * 0.3 * t)
-                if _navigator.is_navigating:
-                    _robot.set_target(antennas=[0.3 + breath, 0.3 + breath])
-                else:
-                    _robot.set_target(antennas=[breath, breath])
+                # 更新人物偵測
+                if _detector and _detector.is_running:
+                    _detector.update(effective_dt)
+
+                # 更新主動觸發
+                if _proactive and _proactive.is_running:
+                    _proactive.update(effective_dt)
+
+                # 插值引擎 tick
+                interp_result = _robot._interp_engine.tick(effective_dt)
+                if interp_result:
+                    _robot.set_target(**interp_result)
+
+                # 動作回放 tick
+                _robot._motion_player.tick(effective_dt, _robot)
+
+                # 動作錄製：擷取當前幀
+                if _robot._motion_recorder.is_recording:
+                    _robot._motion_recorder.capture(_robot)
+
+                # 天線呼吸動畫（僅在無插值/動作播放時）
+                if not _robot._interp_engine.is_active and not _robot._motion_player.is_playing:
+                    t = _scenario.current_time
+                    breath = 0.15 * math.sin(2 * math.pi * 0.3 * t)
+                    if _navigator.is_navigating:
+                        _robot.set_target(antennas=[0.3 + breath, 0.3 + breath])
+                    else:
+                        _robot.set_target(antennas=[breath, breath])
 
         time.sleep(0.15)
 
@@ -307,6 +372,17 @@ def _get_full_state() -> dict[str, Any]:
             "body_yaw_deg": state["body_yaw_deg"],
             "is_moving": state["is_moving"],
             "move_target": list(state["move_target"]) if state["move_target"] else None,
+            "is_awake": _robot.is_awake,
+            "motor_states": {
+                name: _robot.is_motor_enabled(name)
+                for name in ["head_roll", "head_pitch", "head_yaw", "antenna_right", "antenna_left", "body_yaw"]
+            },
+            "gravity_compensation": _robot._gravity_compensation if hasattr(_robot, '_gravity_compensation') else False,
+            "is_recording": _robot.media.is_recording,
+            "is_sound_playing": _robot.media.is_sound_playing(),
+            "is_motion_playing": _robot.is_motion_playing,
+            "imu": _robot.get_imu_data(),
+            "joints": _robot.get_current_joint_positions(),
         },
         "nav_target": _navigator.current_target,
         "nav_path": nav_path,
@@ -333,6 +409,25 @@ def _get_full_state() -> dict[str, Any]:
                 for m in _calendar.meetings
             ],
         },
+        "perception": {
+            "mode": "mock" if isinstance(_detector, MockPersonDetector) else "yolo" if _detector else "none",
+            "person_visible": _detector.person_visible if _detector else False,
+            "person_count": _detector.person_count if _detector else 0,
+            "persons": _detector.get_persons() if isinstance(_detector, MockPersonDetector) else {},
+            "absence_duration": _detector.get_person_absence_duration() if _detector else 0.0,
+            "is_running": _detector.is_running if _detector else False,
+        },
+        "proactive": {
+            "enabled": _proactive.enabled if _proactive else False,
+            "is_running": _proactive.is_running if _proactive else False,
+            "last_trigger_type": _last_trigger_type,
+            "last_trigger_time": _last_trigger_time,
+        },
+        "conversation": {
+            "last_response": _last_brain_response.text if _last_brain_response else None,
+            "last_emotion": _last_brain_response.emotion if _last_brain_response else None,
+            "history_count": len(_chat_history),
+        },
     }
 
 
@@ -351,6 +446,10 @@ async def _lifespan(application: FastAPI):
     # 關閉
     global _sim_running
     _sim_running = False
+    if _proactive:
+        _proactive.stop()
+    if _detector:
+        _detector.stop()
     if _brain:
         _brain.stop()
     if _robot:
@@ -501,6 +600,358 @@ async def control(body: dict[str, Any]) -> dict[str, Any]:
         return {"success": True}
 
     return {"success": False, "error": f"未知的動作: {action}"}
+
+
+# ── Phase 4A: 新增 REST API 端點 ────────────────────────────────
+
+@app.post("/api/goto_target")
+async def goto_target(body: dict[str, Any]) -> dict[str, Any]:
+    """插值目標設定。
+
+    body: {head: list (4x4 nested), antennas: [r, l], body_yaw: float,
+           duration: float, method: str}
+    """
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        try:
+            import numpy as np
+            head = None
+            if "head" in body:
+                head = np.array(body["head"], dtype=np.float64)
+            antennas = body.get("antennas")
+            body_yaw = body.get("body_yaw")
+            duration = float(body.get("duration", 1.0))
+            method = body.get("method", "MIN_JERK")
+
+            _robot.goto_target(
+                head=head,
+                antennas=antennas,
+                body_yaw=body_yaw,
+                duration=duration,
+                method=method,
+            )
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+@app.post("/api/look_at")
+async def look_at(body: dict[str, Any]) -> dict[str, Any]:
+    """凝視追蹤。
+
+    body: {mode: "image", u: float, v: float}
+       或 {mode: "world", x: float, y: float, z: float}
+    """
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        try:
+            mode = body.get("mode", "image")
+            if mode == "image":
+                u = float(body.get("u", 0.5))
+                v = float(body.get("v", 0.5))
+                _robot.look_at_image(u, v)
+            elif mode == "world":
+                x = float(body.get("x", 1.0))
+                y = float(body.get("y", 0.0))
+                z = float(body.get("z", 0.0))
+                _robot.look_at_world(x, y, z)
+            else:
+                return {"success": False, "error": f"未知的模式: {mode}"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+@app.post("/api/wake_up")
+async def wake_up_endpoint() -> dict[str, Any]:
+    """喚醒機器人。"""
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        _robot.wake_up()
+        return {"success": True, "is_awake": True}
+
+
+@app.post("/api/goto_sleep")
+async def goto_sleep_endpoint() -> dict[str, Any]:
+    """讓機器人睡眠。"""
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        _robot.goto_sleep()
+        return {"success": True, "is_awake": False}
+
+
+@app.post("/api/motor")
+async def motor_control(body: dict[str, Any]) -> dict[str, Any]:
+    """馬達控制。body: {motor_name: str, enabled: bool}"""
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        try:
+            motor_name = body.get("motor_name", "")
+            enabled = bool(body.get("enabled", True))
+            _robot.set_motor_enabled(motor_name, enabled)
+            return {"success": True, "motor_name": motor_name, "enabled": enabled}
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+
+@app.post("/api/play_sound")
+async def play_sound_endpoint(body: dict[str, Any]) -> dict[str, Any]:
+    """播放音檔。body: {file_path: str}"""
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        file_path = body.get("file_path", "")
+        if not file_path:
+            return {"success": False, "error": "file_path 不可為空"}
+        _robot.media.play_sound(file_path)
+        return {"success": True}
+
+
+@app.post("/api/record")
+async def record_control(body: dict[str, Any]) -> dict[str, Any]:
+    """錄音控制。body: {action: "start"|"stop"|"get_sample"}"""
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        action = body.get("action", "")
+        if action == "start":
+            _robot.media.start_recording()
+            return {"success": True, "is_recording": True}
+        elif action == "stop":
+            _robot.media.stop_recording()
+            return {"success": True, "is_recording": False}
+        elif action == "get_sample":
+            sample = _robot.media.get_audio_sample()
+            if sample is not None:
+                return {"success": True, "sample_length": len(sample)}
+            return {"success": True, "sample_length": 0}
+        return {"success": False, "error": f"未知的動作: {action}"}
+
+
+@app.post("/api/motion")
+async def motion_control(body: dict[str, Any]) -> dict[str, Any]:
+    """動作錄製/回放。
+
+    body: {action: "start_record"|"stop_record"|"play"|"stop",
+           move: dict (for play), speed: float (for play)}
+    """
+    global _last_recorded_move
+
+    if not _robot:
+        return {"success": False, "error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        action = body.get("action", "")
+
+        if action == "start_record":
+            _robot.start_motion_recording()
+            return {"success": True, "recording": True}
+
+        elif action == "stop_record":
+            move = _robot.stop_motion_recording()
+            _last_recorded_move = move
+            return {
+                "success": True,
+                "recording": False,
+                "frames": len(move.frames),
+                "duration": move.duration,
+            }
+
+        elif action == "play":
+            move_data = body.get("move")
+            speed = float(body.get("speed", 1.0))
+            if move_data:
+                move = Move.from_dict(move_data)
+            elif _last_recorded_move:
+                move = _last_recorded_move
+            else:
+                return {"success": False, "error": "沒有可回放的動作"}
+            _robot.play_motion(move, speed)
+            return {"success": True, "playing": True}
+
+        elif action == "stop":
+            _robot._motion_player.stop()
+            return {"success": True, "playing": False}
+
+        return {"success": False, "error": f"未知的動作: {action}"}
+
+
+@app.get("/api/imu")
+async def get_imu() -> dict[str, Any]:
+    """取得 IMU 數據。"""
+    if not _robot:
+        return {"error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        return _robot.get_imu_data()
+
+
+@app.get("/api/joints")
+async def get_joints() -> dict[str, Any]:
+    """取得關節角度。"""
+    if not _robot:
+        return {"error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        return _robot.get_current_joint_positions()
+
+
+@app.get("/api/doa")
+async def get_doa_endpoint() -> dict[str, Any]:
+    """取得聲源方向。"""
+    if not _robot:
+        return {"error": "模擬器尚未初始化"}
+
+    with _sim_lock:
+        return {"doa": _robot.media.get_doa()}
+
+
+# ── 人物感知 + 主動對話 REST API ─────────────────────────────────
+
+@app.get("/api/perception")
+async def get_perception() -> dict[str, Any]:
+    """回傳人物偵測狀態。"""
+    if _detector is None:
+        return {"error": "detector not initialized"}
+    with _sim_lock:
+        return {
+            "mode": "mock" if isinstance(_detector, MockPersonDetector) else "yolo",
+            "person_visible": _detector.person_visible,
+            "person_count": _detector.person_count,
+            "person_positions": _detector.person_positions,
+            "persons": _detector.get_persons() if isinstance(_detector, MockPersonDetector) else {},
+            "absence_duration": _detector.get_person_absence_duration(),
+            "is_running": _detector.is_running,
+        }
+
+
+@app.post("/api/perception/inject")
+async def inject_person(data: dict[str, Any]) -> dict[str, Any]:
+    """手動注入人物（mock 模式）。
+
+    data: {"name": "David", "position": [0.5, 0.5]}
+    """
+    if not isinstance(_detector, MockPersonDetector):
+        return {"success": False, "error": "只有 mock 模式可手動注入"}
+
+    name = data.get("name", "").strip()
+    if not name:
+        return {"success": False, "error": "name 不可為空"}
+
+    position = data.get("position", [0.5, 0.5])
+    if isinstance(position, list) and len(position) == 2:
+        pos = (float(position[0]), float(position[1]))
+    else:
+        pos = (0.5, 0.5)
+
+    with _sim_lock:
+        _detector.inject_person(name, pos)
+        _add_event(f"手動注入人物: {name}", "person")
+
+    return {"success": True, "name": name, "position": list(pos)}
+
+
+@app.post("/api/perception/remove")
+async def remove_person(data: dict[str, Any]) -> dict[str, Any]:
+    """移除人物（mock 模式）。
+
+    data: {"name": "David"}
+    """
+    if not isinstance(_detector, MockPersonDetector):
+        return {"success": False, "error": "只有 mock 模式可手動移除"}
+
+    name = data.get("name", "").strip()
+    if not name:
+        return {"success": False, "error": "name 不可為空"}
+
+    with _sim_lock:
+        _detector.remove_person(name)
+        _add_event(f"手動移除人物: {name}", "leave")
+
+    return {"success": True, "name": name}
+
+
+@app.get("/api/proactive/status")
+async def get_proactive_status() -> dict[str, Any]:
+    """回傳主動觸發狀態。"""
+    return {
+        "enabled": _proactive.enabled if _proactive else False,
+        "is_running": _proactive.is_running if _proactive else False,
+        "greet_cooldown": _proactive.greet_cooldown if _proactive else 0,
+        "idle_timeout": _proactive.idle_timeout if _proactive else 0,
+        "last_trigger_type": _last_trigger_type,
+        "last_trigger_time": _last_trigger_time,
+    }
+
+
+@app.post("/api/proactive/config")
+async def update_proactive_config(data: dict[str, Any]) -> dict[str, Any]:
+    """更新主動觸發設定。
+
+    data: {"enabled": true, "greet_cooldown": 30, "idle_timeout": 120}
+    """
+    if _proactive is None:
+        return {"success": False, "error": "proactive not initialized"}
+
+    if "enabled" in data:
+        _proactive.enabled = bool(data["enabled"])
+    if "greet_cooldown" in data:
+        _proactive._greet_cooldown = float(data["greet_cooldown"])
+    if "idle_timeout" in data:
+        _proactive._idle_timeout = float(data["idle_timeout"])
+
+    return {
+        "success": True,
+        "enabled": _proactive.enabled,
+        "greet_cooldown": _proactive.greet_cooldown,
+        "idle_timeout": _proactive.idle_timeout,
+    }
+
+
+@app.post("/api/chat")
+async def send_chat(data: dict[str, Any]) -> dict[str, Any]:
+    """手動發送對話訊息。
+
+    data: {"message": "你好", "name": "使用者"}
+    """
+    message = data.get("message", "").strip()
+    if not message:
+        return {"success": False, "error": "message 不可為空"}
+
+    name = data.get("name", "使用者")
+
+    with _sim_lock:
+        _add_event(f'{name}: "{message}"', "user")
+        _chat_history.append({
+            "role": "user",
+            "text": message,
+            "name": name,
+            "time": time.time(),
+        })
+        if _brain:
+            _brain.handle_event("user_speaks", {"name": name, "text": message})
+        if _proactive:
+            _proactive.reset_idle_timer()
+
+    return {"success": True}
+
+
+@app.get("/api/chat/history")
+async def get_chat_history() -> dict[str, Any]:
+    """回傳對話歷史。"""
+    return {"history": list(_chat_history[-100:])}
 
 
 # ── WebSocket ────────────────────────────────────────────────────

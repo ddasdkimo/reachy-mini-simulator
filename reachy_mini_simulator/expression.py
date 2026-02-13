@@ -17,50 +17,11 @@ import time
 
 import numpy as np
 
+from .utils import create_head_pose
+
 # 天線最大角度（度），轉換為弧度
 ANTENNA_MAX_DEG = 35.0
 ANTENNA_MAX_RAD = math.radians(ANTENNA_MAX_DEG)
-
-
-def _create_head_pose(
-    yaw: float = 0.0,
-    pitch: float = 0.0,
-    roll: float = 0.0,
-    degrees: bool = True,
-) -> np.ndarray:
-    """建立 4x4 齊次轉換矩陣表示頭部姿態。
-
-    這是 reachy_mini.utils.create_head_pose 的簡化版本，
-    不依賴 scipy，直接用旋轉矩陣計算。
-
-    Args:
-        yaw: 偏轉角（繞 z 軸）。
-        pitch: 俯仰角（繞 y 軸）。
-        roll: 翻滾角（繞 x 軸）。
-        degrees: 若為 True，角度以度為單位。
-
-    Returns:
-        4x4 齊次轉換矩陣。
-    """
-    if degrees:
-        roll = math.radians(roll)
-        pitch = math.radians(pitch)
-        yaw = math.radians(yaw)
-
-    # Rz(yaw) * Ry(pitch) * Rx(roll)
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-
-    rot = np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp,     cp * sr,                cp * cr               ],
-    ])
-
-    pose = np.eye(4)
-    pose[:3, :3] = rot
-    return pose
 
 
 class ExpressionEngine:
@@ -132,7 +93,7 @@ class ExpressionEngine:
             self._emotion = None
             left, right, yaw, pitch = self._state_animation(t)
 
-        head = _create_head_pose(yaw=yaw, pitch=pitch, degrees=True)
+        head = create_head_pose(yaw=yaw, pitch=pitch, degrees=True)
         robot.set_target(antennas=[left, right], head=head)
 
     def _state_animation(self, t: float) -> tuple[float, float, float, float]:

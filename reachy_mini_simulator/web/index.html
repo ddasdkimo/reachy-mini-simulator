@@ -303,6 +303,152 @@ body {
   white-space: nowrap;
 }
 
+/* ── 可折疊面板 ────────────────────────────────────── */
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+
+.collapsible-header h3 { margin-bottom: 0; }
+
+.collapsible-header .toggle-icon {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+
+.collapsible-header .toggle-icon.open { transform: rotate(90deg); }
+
+.collapsible-body {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.2s ease-out;
+}
+
+.collapsible-body.open {
+  max-height: 600px;
+}
+
+/* ── 馬達 checkbox ──────────────────────────────────── */
+.motor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  margin-top: 4px;
+}
+
+.motor-grid label {
+  font-size: 11px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.motor-grid input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* ── 滑桿 ──────────────────────────────────────────── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 4px;
+}
+
+.slider-row .slider-val {
+  min-width: 32px;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+.slider-row select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+/* ── 小按鈕組 ────────────────────────────────────────── */
+.btn-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.btn-group button, .btn-sm {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-group button:hover, .btn-sm:hover {
+  background: var(--panel-border);
+  color: var(--text-highlight);
+}
+
+.btn-group button.active-btn {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.btn-group button.recording {
+  background: #ff4444;
+  color: #fff;
+  border-color: #ff4444;
+}
+
+/* ── 數據網格 ────────────────────────────────────────── */
+.data-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.data-grid .data-label {
+  color: var(--text-dim);
+}
+
+.data-grid .data-value {
+  color: var(--text);
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+/* ── 狀態指示圓點 ──────────────────────────────────── */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.status-dot.on { background: var(--accent); }
+.status-dot.off { background: #ff4444; }
+
 /* ── 響應式 ──────────────────────────────────────── */
 @media (max-width: 800px) {
   .main { flex-direction: column; }
@@ -361,6 +507,208 @@ body {
       <div class="info-row"><span class="label">狀態:</span> <span id="robot-move">--</span></div>
       <div class="info-row"><span class="label">天線:</span> <span id="robot-ant">--</span></div>
       <div class="info-row"><span class="label">頭部:</span> <span id="robot-head">--</span></div>
+      <div class="info-row"><span class="label">喚醒:</span> <span id="robot-awake">--</span></div>
+    </div>
+
+    <!-- 喚醒/睡眠 + 馬達控制 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="motor-panel-body">
+        <h3>馬達控制</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="motor-panel-body">
+        <div class="btn-group" style="margin-top:6px;">
+          <button id="btn-wake-sleep">Wake Up</button>
+        </div>
+        <div class="motor-grid" id="motor-grid">
+          <label><input type="checkbox" data-motor="head_roll" checked> head_roll</label>
+          <label><input type="checkbox" data-motor="head_pitch" checked> head_pitch</label>
+          <label><input type="checkbox" data-motor="head_yaw" checked> head_yaw</label>
+          <label><input type="checkbox" data-motor="antenna_right" checked> ant_right</label>
+          <label><input type="checkbox" data-motor="antenna_left" checked> ant_left</label>
+          <label><input type="checkbox" data-motor="body_yaw" checked> body_yaw</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 插值控制 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="interp-panel-body">
+        <h3>插值控制</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="interp-panel-body">
+        <div class="slider-row" style="margin-top:6px;">
+          <span>方法:</span>
+          <select id="interp-method">
+            <option value="MIN_JERK" selected>MIN_JERK</option>
+            <option value="LINEAR">LINEAR</option>
+            <option value="EASE">EASE</option>
+            <option value="CARTOON">CARTOON</option>
+          </select>
+        </div>
+        <div class="slider-row">
+          <span>時長:</span>
+          <input type="range" id="interp-duration" min="0.1" max="5.0" step="0.1" value="1.0">
+          <span class="slider-val" id="interp-duration-val">1.0s</span>
+        </div>
+        <div class="slider-row">
+          <span>Yaw:</span>
+          <input type="range" id="interp-yaw" min="-45" max="45" step="1" value="0">
+          <span class="slider-val" id="interp-yaw-val">0</span>
+        </div>
+        <div class="slider-row">
+          <span>Pitch:</span>
+          <input type="range" id="interp-pitch" min="-30" max="30" step="1" value="0">
+          <span class="slider-val" id="interp-pitch-val">0</span>
+        </div>
+        <div class="btn-group">
+          <button id="btn-goto-target">Go</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 音訊面板 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="audio-panel-body">
+        <h3>音訊</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="audio-panel-body">
+        <div class="btn-group" style="margin-top:6px;">
+          <button id="btn-play-sound">Play Sound</button>
+          <button id="btn-record-toggle">Rec Start</button>
+        </div>
+        <div class="info-row" style="margin-top:4px;">
+          <span class="label">DoA:</span> <span id="audio-doa">--</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Sound:</span> <span id="audio-sound-status">--</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Rec:</span> <span id="audio-rec-status">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 動作面板 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="motion-panel-body">
+        <h3>動作錄製/回放</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="motion-panel-body">
+        <div class="btn-group" style="margin-top:6px;">
+          <button id="btn-motion-rec-toggle">Rec Start</button>
+          <button id="btn-motion-play">Play</button>
+          <button id="btn-motion-stop">Stop</button>
+        </div>
+        <div class="slider-row">
+          <span>Speed:</span>
+          <input type="range" id="motion-speed" min="0.1" max="3.0" step="0.1" value="1.0">
+          <span class="slider-val" id="motion-speed-val">1.0x</span>
+        </div>
+        <div class="info-row" style="margin-top:4px;">
+          <span class="label">Status:</span> <span id="motion-status">Idle</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMU 顯示 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="imu-panel-body">
+        <h3>IMU 數據</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="imu-panel-body">
+        <div class="data-grid" id="imu-data">
+          <span class="data-label">Accel:</span><span class="data-value" id="imu-accel">--</span>
+          <span class="data-label">Gyro:</span><span class="data-value" id="imu-gyro">--</span>
+          <span class="data-label">Quat:</span><span class="data-value" id="imu-quat">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 關節角度 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="joints-panel-body">
+        <h3>關節角度</h3>
+        <span class="toggle-icon">&#9654;</span>
+      </div>
+      <div class="collapsible-body" id="joints-panel-body">
+        <div class="data-grid" id="joints-data">
+          <span class="data-label">head_roll:</span><span class="data-value" id="joint-head-roll">--</span>
+          <span class="data-label">head_pitch:</span><span class="data-value" id="joint-head-pitch">--</span>
+          <span class="data-label">head_yaw:</span><span class="data-value" id="joint-head-yaw">--</span>
+          <span class="data-label">ant_right:</span><span class="data-value" id="joint-ant-right">--</span>
+          <span class="data-label">ant_left:</span><span class="data-value" id="joint-ant-left">--</span>
+          <span class="data-label">body_yaw:</span><span class="data-value" id="joint-body-yaw">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 人物感知 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="perception-panel-body">
+        <h3>人物感知</h3>
+        <span class="toggle-icon open">&#9654;</span>
+      </div>
+      <div class="collapsible-body open" id="perception-panel-body">
+        <div class="info-row" style="margin-top:4px;">
+          <span class="label">模式:</span> <span id="perception-mode">--</span>
+        </div>
+        <div class="info-row">
+          <span class="label">狀態:</span> <span id="perception-status">--</span>
+        </div>
+        <div class="info-row">
+          <span class="label">人數:</span> <span id="perception-count">0</span>
+        </div>
+        <div id="perception-persons-list" style="margin-top:4px;"></div>
+        <div style="display:flex; gap:4px; margin-top:6px; align-items:center;">
+          <input type="text" id="inject-person-name" placeholder="人物名稱"
+            style="flex:1; padding:4px 8px; font-size:12px; background:var(--bg); color:var(--text); border:1px solid var(--panel-border); border-radius:3px; outline:none;">
+          <button class="btn-sm" id="btn-inject-person">注入</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主動對話 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="proactive-panel-body">
+        <h3>主動對話</h3>
+        <span class="toggle-icon open">&#9654;</span>
+      </div>
+      <div class="collapsible-body open" id="proactive-panel-body">
+        <div style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:12px;">
+          <label style="cursor:pointer; display:flex; align-items:center; gap:4px;">
+            <input type="checkbox" id="proactive-enabled" checked style="accent-color:var(--accent);">
+            啟用主動觸發
+          </label>
+        </div>
+        <div style="display:flex; gap:6px; margin-top:6px; align-items:center; font-size:11px;">
+          <span style="color:var(--text-dim);">冷卻:</span>
+          <input type="number" id="proactive-cooldown" value="30" min="1" max="600" step="1"
+            style="width:50px; padding:2px 4px; font-size:11px; background:var(--bg); color:var(--text); border:1px solid var(--panel-border); border-radius:3px;">
+          <span style="color:var(--text-dim);">s</span>
+          <span style="color:var(--text-dim); margin-left:4px;">閒置:</span>
+          <input type="number" id="proactive-idle-timeout" value="120" min="1" max="600" step="1"
+            style="width:50px; padding:2px 4px; font-size:11px; background:var(--bg); color:var(--text); border:1px solid var(--panel-border); border-radius:3px;">
+          <span style="color:var(--text-dim);">s</span>
+          <button class="btn-sm" id="btn-proactive-update">更新</button>
+        </div>
+        <div class="info-row" style="margin-top:4px;">
+          <span class="label">觸發:</span> <span id="proactive-last-trigger">--</span>
+        </div>
+        <div id="chat-history-area"
+          style="max-height:120px; overflow-y:auto; margin-top:6px; padding:4px; background:var(--bg); border-radius:4px; font-size:11px; line-height:1.5;">
+          <div style="color:var(--text-dim);">(尚無對話)</div>
+        </div>
+        <div style="display:flex; gap:4px; margin-top:6px;">
+          <input type="text" id="chat-input" placeholder="對機器人說話..."
+            style="flex:1; padding:4px 8px; font-size:12px; background:var(--bg); color:var(--text); border:1px solid var(--panel-border); border-radius:3px; outline:none;">
+          <button class="btn-sm" id="btn-chat-send" style="background:var(--text-highlight); color:var(--bg); border-color:var(--text-highlight); font-weight:600;">送出</button>
+        </div>
+      </div>
     </div>
 
     <!-- 行事曆 -->
@@ -872,6 +1220,475 @@ tabs.forEach(tab => {
     }
   });
 });
+
+// ── 可折疊面板 ────────────────────────────────────────────────────
+document.querySelectorAll('.collapsible-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const targetId = header.dataset.target;
+    const body = document.getElementById(targetId);
+    const icon = header.querySelector('.toggle-icon');
+    if (body.classList.contains('open')) {
+      body.classList.remove('open');
+      icon.classList.remove('open');
+    } else {
+      body.classList.add('open');
+      icon.classList.add('open');
+    }
+  });
+});
+
+// ── 喚醒/睡眠控制 ────────────────────────────────────────────────
+let isAwake = true;
+
+document.getElementById('btn-wake-sleep').addEventListener('click', async () => {
+  const url = isAwake ? '/api/goto_sleep' : '/api/wake_up';
+  try {
+    const resp = await fetch(url, { method: 'POST' });
+    const data = await resp.json();
+    if (data.success) {
+      isAwake = data.is_awake;
+      updateWakeSleepBtn();
+    }
+  } catch (e) {
+    console.error('wake/sleep error:', e);
+  }
+});
+
+function updateWakeSleepBtn() {
+  const btn = document.getElementById('btn-wake-sleep');
+  btn.textContent = isAwake ? 'Go to Sleep' : 'Wake Up';
+  if (isAwake) {
+    btn.classList.remove('active-btn');
+  } else {
+    btn.classList.add('active-btn');
+  }
+}
+
+// ── 馬達控制 ────────────────────────────────────────────────────
+document.getElementById('motor-grid').addEventListener('change', async (e) => {
+  if (e.target.type !== 'checkbox') return;
+  const motorName = e.target.dataset.motor;
+  const enabled = e.target.checked;
+  try {
+    await fetch('/api/motor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motor_name: motorName, enabled }),
+    });
+  } catch (err) {
+    console.error('motor error:', err);
+  }
+});
+
+// ── 插值控制 ────────────────────────────────────────────────────
+const interpDuration = document.getElementById('interp-duration');
+const interpDurationVal = document.getElementById('interp-duration-val');
+interpDuration.addEventListener('input', () => {
+  interpDurationVal.textContent = parseFloat(interpDuration.value).toFixed(1) + 's';
+});
+
+const interpYaw = document.getElementById('interp-yaw');
+const interpYawVal = document.getElementById('interp-yaw-val');
+interpYaw.addEventListener('input', () => {
+  interpYawVal.textContent = interpYaw.value;
+});
+
+const interpPitch = document.getElementById('interp-pitch');
+const interpPitchVal = document.getElementById('interp-pitch-val');
+interpPitch.addEventListener('input', () => {
+  interpPitchVal.textContent = interpPitch.value;
+});
+
+document.getElementById('btn-goto-target').addEventListener('click', async () => {
+  const method = document.getElementById('interp-method').value;
+  const duration = parseFloat(interpDuration.value);
+  const yaw = parseFloat(interpYaw.value);
+  const pitch = parseFloat(interpPitch.value);
+
+  // 建構簡單的 4x4 旋轉矩陣 (Rz*Ry)
+  const yr = yaw * Math.PI / 180;
+  const pr = pitch * Math.PI / 180;
+  const cy = Math.cos(yr), sy = Math.sin(yr);
+  const cp = Math.cos(pr), sp = Math.sin(pr);
+  const head = [
+    [cy*cp, -sy, cy*sp, 0],
+    [sy*cp,  cy, sy*sp, 0],
+    [-sp,     0, cp,    0],
+    [0,       0, 0,     1],
+  ];
+
+  try {
+    await fetch('/api/goto_target', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ head, duration, method }),
+    });
+  } catch (err) {
+    console.error('goto_target error:', err);
+  }
+});
+
+// ── 音訊控制 ────────────────────────────────────────────────────
+document.getElementById('btn-play-sound').addEventListener('click', async () => {
+  try {
+    await fetch('/api/play_sound', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: 'demo.wav' }),
+    });
+  } catch (err) {
+    console.error('play_sound error:', err);
+  }
+});
+
+let isRecordingAudio = false;
+document.getElementById('btn-record-toggle').addEventListener('click', async () => {
+  const action = isRecordingAudio ? 'stop' : 'start';
+  try {
+    const resp = await fetch('/api/record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      isRecordingAudio = data.is_recording;
+      const btn = document.getElementById('btn-record-toggle');
+      btn.textContent = isRecordingAudio ? 'Rec Stop' : 'Rec Start';
+      if (isRecordingAudio) btn.classList.add('recording');
+      else btn.classList.remove('recording');
+    }
+  } catch (err) {
+    console.error('record error:', err);
+  }
+});
+
+// ── 動作控制 ────────────────────────────────────────────────────
+const motionSpeed = document.getElementById('motion-speed');
+const motionSpeedVal = document.getElementById('motion-speed-val');
+motionSpeed.addEventListener('input', () => {
+  motionSpeedVal.textContent = parseFloat(motionSpeed.value).toFixed(1) + 'x';
+});
+
+let isRecordingMotion = false;
+document.getElementById('btn-motion-rec-toggle').addEventListener('click', async () => {
+  const action = isRecordingMotion ? 'stop_record' : 'start_record';
+  try {
+    const resp = await fetch('/api/motion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      isRecordingMotion = !isRecordingMotion;
+      const btn = document.getElementById('btn-motion-rec-toggle');
+      btn.textContent = isRecordingMotion ? 'Rec Stop' : 'Rec Start';
+      if (isRecordingMotion) btn.classList.add('recording');
+      else btn.classList.remove('recording');
+    }
+  } catch (err) {
+    console.error('motion rec error:', err);
+  }
+});
+
+document.getElementById('btn-motion-play').addEventListener('click', async () => {
+  const speed = parseFloat(motionSpeed.value);
+  try {
+    await fetch('/api/motion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'play', speed }),
+    });
+  } catch (err) {
+    console.error('motion play error:', err);
+  }
+});
+
+document.getElementById('btn-motion-stop').addEventListener('click', async () => {
+  try {
+    await fetch('/api/motion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'stop' }),
+    });
+  } catch (err) {
+    console.error('motion stop error:', err);
+  }
+});
+
+// ── 擴展 updateUI: 新增欄位 ─────────────────────────────────────
+const _origUpdateUI = updateUI;
+updateUI = function(state) {
+  _origUpdateUI(state);
+  if (!state) return;
+
+  // 更新感知面板
+  if (state.perception) {
+    updatePerceptionPanel(state.perception);
+  }
+  // 更新主動對話面板
+  if (state.proactive) {
+    updateProactivePanel(state.proactive);
+  }
+  if (state.conversation) {
+    updateConversationPanel(state.conversation);
+  }
+
+  if (!state.robot) return;
+  const r = state.robot;
+
+  // 喚醒狀態
+  if (r.is_awake !== undefined) {
+    isAwake = r.is_awake;
+    const awakeEl = document.getElementById('robot-awake');
+    awakeEl.innerHTML = r.is_awake
+      ? '<span class="status-dot on"></span>Awake'
+      : '<span class="status-dot off"></span>Sleep';
+    updateWakeSleepBtn();
+  }
+
+  // 馬達 checkbox 同步
+  if (r.motor_states) {
+    document.querySelectorAll('#motor-grid input[type="checkbox"]').forEach(cb => {
+      const motor = cb.dataset.motor;
+      if (motor in r.motor_states) {
+        cb.checked = r.motor_states[motor];
+      }
+    });
+  }
+
+  // 音訊狀態
+  if (r.is_sound_playing !== undefined) {
+    document.getElementById('audio-sound-status').textContent =
+      r.is_sound_playing ? 'Playing' : 'Idle';
+  }
+  if (r.is_recording !== undefined) {
+    document.getElementById('audio-rec-status').textContent =
+      r.is_recording ? 'Recording' : 'Idle';
+  }
+
+  // DoA (from IMU/sensor data)
+  if (r.imu) {
+    const acc = r.imu.accelerometer;
+    const gyro = r.imu.gyroscope;
+    const quat = r.imu.quaternion;
+    document.getElementById('imu-accel').textContent =
+      acc.map(v => v.toFixed(3)).join(', ');
+    document.getElementById('imu-gyro').textContent =
+      gyro.map(v => v.toFixed(3)).join(', ');
+    document.getElementById('imu-quat').textContent =
+      quat.map(v => v.toFixed(3)).join(', ');
+  }
+
+  // 關節角度
+  if (r.joints) {
+    document.getElementById('joint-head-roll').textContent = r.joints.head_roll.toFixed(1) + '\u00b0';
+    document.getElementById('joint-head-pitch').textContent = r.joints.head_pitch.toFixed(1) + '\u00b0';
+    document.getElementById('joint-head-yaw').textContent = r.joints.head_yaw.toFixed(1) + '\u00b0';
+    document.getElementById('joint-ant-right').textContent = r.joints.antenna_right.toFixed(1) + '\u00b0';
+    document.getElementById('joint-ant-left').textContent = r.joints.antenna_left.toFixed(1) + '\u00b0';
+    document.getElementById('joint-body-yaw').textContent = r.joints.body_yaw.toFixed(1) + '\u00b0';
+  }
+
+  // 動作狀態
+  if (r.is_motion_playing !== undefined) {
+    document.getElementById('motion-status').textContent =
+      r.is_motion_playing ? 'Playing' : 'Idle';
+  }
+};
+
+// 異步載入 DoA
+async function updateDoa() {
+  try {
+    const resp = await fetch('/api/doa');
+    const data = await resp.json();
+    if (data.doa !== undefined) {
+      document.getElementById('audio-doa').textContent = data.doa.toFixed(1) + '\u00b0';
+    }
+  } catch (e) { /* ignore */ }
+}
+setInterval(updateDoa, 2000);
+
+// ── 人物感知面板 ──────────────────────────────────────────────────
+function updatePerceptionPanel(perception) {
+  if (!perception) return;
+  document.getElementById('perception-mode').textContent =
+    perception.mode === 'mock' ? 'Script (Mock)' : perception.mode === 'yolo' ? 'YOLO' : '--';
+
+  const statusEl = document.getElementById('perception-status');
+  if (perception.person_visible) {
+    statusEl.innerHTML = '<span class="status-dot on"></span>偵測到人物';
+  } else {
+    statusEl.innerHTML = '<span class="status-dot off"></span>無人';
+  }
+
+  document.getElementById('perception-count').textContent = perception.person_count;
+
+  // 已偵測人物列表
+  const listEl = document.getElementById('perception-persons-list');
+  const persons = perception.persons || {};
+  const names = Object.keys(persons);
+  if (names.length === 0) {
+    listEl.innerHTML = '';
+  } else {
+    let html = '';
+    for (const name of names) {
+      const pos = persons[name];
+      const posStr = Array.isArray(pos) ? `(${pos[0].toFixed(2)}, ${pos[1].toFixed(2)})` : '';
+      html += `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:1px 0;">`;
+      html += `<span style="color:var(--person-color);">${escapeHtml(name)} ${posStr}</span>`;
+      html += `<button class="btn-sm" onclick="removePerson('${escapeHtml(name)}')" style="padding:1px 6px; font-size:10px;">移除</button>`;
+      html += `</div>`;
+    }
+    listEl.innerHTML = html;
+  }
+}
+
+// 注入人物
+document.getElementById('btn-inject-person').addEventListener('click', async () => {
+  const nameInput = document.getElementById('inject-person-name');
+  const name = nameInput.value.trim();
+  if (!name) return;
+  try {
+    await fetch('/api/perception/inject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, position: [0.5, 0.5] }),
+    });
+    nameInput.value = '';
+  } catch (err) {
+    console.error('inject person error:', err);
+  }
+});
+
+document.getElementById('inject-person-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) {
+    document.getElementById('btn-inject-person').click();
+  }
+});
+
+// 移除人物（全域函式，供 onclick 呼叫）
+window.removePerson = async function(name) {
+  try {
+    await fetch('/api/perception/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  } catch (err) {
+    console.error('remove person error:', err);
+  }
+};
+
+// ── 主動對話面板 ──────────────────────────────────────────────────
+function updateProactivePanel(proactive) {
+  if (!proactive) return;
+  document.getElementById('proactive-enabled').checked = proactive.enabled;
+
+  const triggerEl = document.getElementById('proactive-last-trigger');
+  if (proactive.last_trigger_type) {
+    triggerEl.textContent = proactive.last_trigger_type;
+    triggerEl.style.color = 'var(--accent)';
+  } else {
+    triggerEl.textContent = '--';
+    triggerEl.style.color = 'var(--text-dim)';
+  }
+}
+
+function updateConversationPanel(conversation) {
+  // 對話面板由 chat history API 驅動，此處僅做輕量指示更新
+}
+
+// 更新 proactive 設定
+document.getElementById('btn-proactive-update').addEventListener('click', async () => {
+  const enabled = document.getElementById('proactive-enabled').checked;
+  const cooldown = parseFloat(document.getElementById('proactive-cooldown').value) || 30;
+  const idleTimeout = parseFloat(document.getElementById('proactive-idle-timeout').value) || 120;
+  try {
+    await fetch('/api/proactive/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled,
+        greet_cooldown: cooldown,
+        idle_timeout: idleTimeout,
+      }),
+    });
+  } catch (err) {
+    console.error('proactive config error:', err);
+  }
+});
+
+document.getElementById('proactive-enabled').addEventListener('change', () => {
+  document.getElementById('btn-proactive-update').click();
+});
+
+// 對話送出
+const chatInput = document.getElementById('chat-input');
+const btnChatSend = document.getElementById('btn-chat-send');
+
+function doChatSend() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+
+  // 立即在 UI 顯示使用者訊息
+  appendChatMessage('user', text);
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text, name: '使用者' }),
+  }).catch(err => console.error('chat send error:', err));
+
+  chatInput.value = '';
+}
+
+btnChatSend.addEventListener('click', doChatSend);
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) doChatSend();
+});
+
+function appendChatMessage(role, text, emotion) {
+  const area = document.getElementById('chat-history-area');
+  // 清除預設提示
+  if (area.querySelector('div[style]') && area.children.length === 1 &&
+      area.children[0].textContent.includes('尚無對話')) {
+    area.innerHTML = '';
+  }
+  const div = document.createElement('div');
+  div.style.padding = '1px 0';
+  if (role === 'user') {
+    div.style.color = 'var(--text)';
+    div.innerHTML = `<span style="color:var(--accent-blue);">使用者:</span> ${escapeHtml(text)}`;
+  } else {
+    const emotionTag = emotion ? `<span style="color:var(--event-calendar);">[${escapeHtml(emotion)}]</span> ` : '';
+    div.innerHTML = `<span style="color:var(--event-robot);">Robot:</span> ${emotionTag}${escapeHtml(text)}`;
+  }
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+// 定時載入對話歷史
+let lastChatCount = 0;
+async function pollChatHistory() {
+  try {
+    const resp = await fetch('/api/chat/history');
+    const data = await resp.json();
+    if (data.history && data.history.length > lastChatCount) {
+      const newEntries = data.history.slice(lastChatCount);
+      for (const entry of newEntries) {
+        if (entry.role === 'robot') {
+          appendChatMessage('robot', entry.text, entry.emotion);
+        } else if (entry.role === 'user' && lastChatCount > 0) {
+          // 使用者訊息在送出時已即時顯示，只在初始載入時補
+        }
+      }
+      lastChatCount = data.history.length;
+    }
+  } catch (e) { /* ignore */ }
+}
+setInterval(pollChatHistory, 1500);
 
 // ── 初始化 ──────────────────────────────────────────────────────
 async function init() {

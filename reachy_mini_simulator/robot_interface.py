@@ -4,6 +4,8 @@
 真實機器人（RealReachyMini）都遵循相同的介面規範。
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -53,6 +55,55 @@ class MediaInterface(ABC):
     @abstractmethod
     def is_playing(self) -> bool:
         """是否正在播放音訊。"""
+
+    # ── Phase 2A: 音檔播放 ────────────────────────────────────────────
+
+    @abstractmethod
+    def play_sound(self, file_path: str) -> None:
+        """播放音檔。
+
+        Args:
+            file_path: 音檔路徑。
+        """
+
+    @abstractmethod
+    def is_sound_playing(self) -> bool:
+        """是否正在播放音檔。"""
+
+    @abstractmethod
+    def stop_sound(self) -> None:
+        """停止播放音檔。"""
+
+    # ── Phase 2B: 錄音 + DoA ─────────────────────────────────────────
+
+    @abstractmethod
+    def start_recording(self) -> None:
+        """開始錄音。"""
+
+    @abstractmethod
+    def stop_recording(self) -> None:
+        """停止錄音。"""
+
+    @abstractmethod
+    def get_audio_sample(self) -> npt.NDArray[np.float32] | None:
+        """取得錄音樣本。
+
+        Returns:
+            float32 格式的音訊樣本陣列，若未錄音則回傳 None。
+        """
+
+    @property
+    @abstractmethod
+    def is_recording(self) -> bool:
+        """是否正在錄音。"""
+
+    @abstractmethod
+    def get_doa(self) -> float:
+        """取得聲源方向角度（Direction of Arrival）。
+
+        Returns:
+            聲源方向角度（度），0~360。
+        """
 
     @abstractmethod
     def close(self) -> None:
@@ -153,6 +204,136 @@ class RobotInterface(ABC):
         Returns:
             包含各部位狀態、底盤位置等資訊的字典。
         """
+
+    # ── Phase 1A: 插值系統 ────────────────────────────────────────────
+
+    @abstractmethod
+    def goto_target(
+        self,
+        head: npt.NDArray[np.float64] | None = None,
+        antennas: list[float] | None = None,
+        body_yaw: float | None = None,
+        duration: float = 1.0,
+        method: str = "MIN_JERK",
+    ) -> None:
+        """以插值方式平滑移動到目標姿態。
+
+        Args:
+            head: 4x4 齊次轉換矩陣，表示頭部目標姿態。
+            antennas: 長度為 2 的陣列 [right, left]，天線目標角度（弧度）。
+            body_yaw: 身體偏轉目標角度（弧度）。
+            duration: 動畫時長（秒）。
+            method: 插值方法名稱（MIN_JERK / LINEAR / EASE / CARTOON）。
+        """
+
+    @abstractmethod
+    def get_current_joint_positions(self) -> dict[str, float]:
+        """取得當前所有關節位置。
+
+        Returns:
+            關節名稱到角度值的字典。
+        """
+
+    # ── Phase 1B: 凝視追蹤 ────────────────────────────────────────────
+
+    @abstractmethod
+    def look_at_image(self, u: float, v: float) -> None:
+        """看向影像座標。
+
+        Args:
+            u: 影像 x 座標（0.0~1.0，0=左，1=右）。
+            v: 影像 y 座標（0.0~1.0，0=上，1=下）。
+        """
+
+    @abstractmethod
+    def look_at_world(self, x: float, y: float, z: float) -> None:
+        """看向世界座標。
+
+        Args:
+            x: 世界 x 座標（前方為正）。
+            y: 世界 y 座標（左方為正）。
+            z: 世界 z 座標（上方為正）。
+        """
+
+    # ── Phase 1C: 喚醒/睡眠 + 馬達控制 ────────────────────────────────
+
+    @abstractmethod
+    def wake_up(self) -> None:
+        """喚醒機器人，啟用所有馬達。"""
+
+    @abstractmethod
+    def goto_sleep(self) -> None:
+        """讓機器人進入睡眠，關閉所有馬達。"""
+
+    @property
+    @abstractmethod
+    def is_awake(self) -> bool:
+        """機器人是否已喚醒。"""
+
+    @abstractmethod
+    def set_motor_enabled(self, motor_name: str, enabled: bool) -> None:
+        """啟用/停用指定馬達。
+
+        Args:
+            motor_name: 馬達名稱。
+            enabled: True 啟用，False 停用。
+        """
+
+    @abstractmethod
+    def is_motor_enabled(self, motor_name: str) -> bool:
+        """查詢指定馬達是否啟用。
+
+        Args:
+            motor_name: 馬達名稱。
+
+        Returns:
+            是否啟用。
+        """
+
+    @abstractmethod
+    def set_gravity_compensation(self, enabled: bool) -> None:
+        """啟用/停用重力補償。
+
+        Args:
+            enabled: True 啟用，False 停用。
+        """
+
+    # ── Phase 2C: IMU 數據 ────────────────────────────────────────────
+
+    @abstractmethod
+    def get_imu_data(self) -> dict:
+        """取得 IMU 感測器數據。
+
+        Returns:
+            包含以下鍵值的字典：
+            - accelerometer: [ax, ay, az] 加速度（m/s^2）
+            - gyroscope: [gx, gy, gz] 角速度（rad/s）
+            - quaternion: [w, x, y, z] 四元數
+        """
+
+    # ── Phase 3: 動作錄製/回放 ────────────────────────────────────────
+
+    @abstractmethod
+    def start_motion_recording(self) -> None:
+        """開始錄製動作。"""
+
+    @abstractmethod
+    def stop_motion_recording(self) -> "Move":
+        """停止錄製動作並回傳 Move 物件。"""
+
+    @abstractmethod
+    def play_motion(self, move: "Move", speed: float = 1.0) -> None:
+        """回放動作序列。
+
+        Args:
+            move: Move 物件。
+            speed: 播放速度倍率。
+        """
+
+    @property
+    @abstractmethod
+    def is_motion_playing(self) -> bool:
+        """是否正在回放動作。"""
 
     @abstractmethod
     def close(self) -> None:

@@ -97,6 +97,22 @@ FALLBACK_RESPONSES: dict[str, list[str]] = {
         "[思考] 嗯...大家都在忙嗎？我來巡邏一下好了～",
         "[撒嬌] 一個人待著好無聊呀...有人要跟我聊天嗎？",
     ],
+    "proactive": [
+        "[高興] 嗨嗨！有什麼我可以幫忙的嗎？",
+        "[好奇] 你好呀！今天過得怎麼樣呢？",
+    ],
+    "proactive_greet": [
+        "[高興] 嗨！歡迎歡迎～今天也要加油喔！",
+        "[興奮] 哦！有人來了！嘿嘿，你好呀～",
+    ],
+    "proactive_farewell": [
+        "[撒嬌] 掰掰～路上小心喔！",
+        "[高興] 再見啦，下次見！",
+    ],
+    "proactive_idle": [
+        "[好奇] 你還在嗎？需要什麼幫忙嗎？",
+        "[撒嬌] 好安靜喔...要不要聊聊天呀？",
+    ],
 }
 
 _fallback_counters: dict[str, int] = {}
@@ -190,6 +206,12 @@ def _event_to_prompt(event_type: str, data: dict) -> str:
             return f"[系統指令] {msg}"
         return PROACTIVE_IDLE_PROMPT
 
+    elif event_type.startswith("proactive"):
+        msg = data.get("message", "")
+        if msg:
+            return f"[系統指令] {msg}"
+        return PROACTIVE_IDLE_PROMPT
+
     return str(data)
 
 
@@ -249,6 +271,7 @@ class AIBrain:
         """
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._client = None  # 延遲初始化
+        self._detector: object | None = None  # 可選的人物偵測器
         self._history: list[dict] = []
         self._input_queue: queue.Queue[tuple[str, dict] | None] = queue.Queue()
         self._stop = threading.Event()
@@ -300,6 +323,32 @@ class AIBrain:
         if data is None:
             data = {}
         self._input_queue.put((event_type, data))
+
+    def inject(self, prompt: str, event_type: str = "proactive") -> None:
+        """注入主動觸發的對話提示。
+
+        將 prompt 包裝成事件並送入佇列，由背景執行緒處理。
+        回應走現有的 on_response callback 流程。
+
+        Args:
+            prompt: 主動觸發的提示文字。
+            event_type: 事件類型標記，例如 "proactive_greet"、
+                       "proactive_farewell"、"proactive_idle"。
+        """
+        self._input_queue.put((event_type, {"message": prompt}))
+        logger.info("AIBrain.inject: [%s] %s", event_type, prompt)
+
+    def set_detector(self, detector: object) -> None:
+        """綁定人物偵測器（可選）。
+
+        儲存偵測器引用，供未來上下文感知使用
+        （例如根據人數或位置調整回應風格）。
+
+        Args:
+            detector: PersonDetectorInterface 實例。
+        """
+        self._detector = detector
+        logger.info("AIBrain: 已綁定人物偵測器")
 
     def clear_history(self) -> None:
         """清除對話歷史。"""
