@@ -711,6 +711,49 @@ body {
       </div>
     </div>
 
+    <!-- 語音對話 -->
+    <div class="panel-section">
+      <div class="collapsible-header" data-target="voice-panel-body">
+        <h3>語音對話</h3>
+        <span class="toggle-icon open">&#9654;</span>
+      </div>
+      <div class="collapsible-body open" id="voice-panel-body">
+        <!-- 狀態指示 -->
+        <div style="margin-top:4px; margin-bottom:6px; display:flex; align-items:center; gap:6px; font-size:12px;">
+          <span>狀態：</span>
+          <span id="voiceStatus" style="font-weight:bold;">閒置</span>
+          <span id="voiceIndicator" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;"></span>
+        </div>
+
+        <!-- 開始/停止按鈕 -->
+        <div class="btn-group" style="margin-bottom:6px;">
+          <button onclick="startVoice()" id="btnStartVoice">開始監聽</button>
+          <button onclick="stopVoice()" id="btnStopVoice" disabled>停止</button>
+        </div>
+
+        <!-- 最近辨識 -->
+        <div style="margin-bottom:4px;">
+          <div style="font-size:11px;color:var(--text-dim);">最近辨識：</div>
+          <div id="lastTranscript" style="font-style:italic;color:var(--text-dim);font-size:12px;">—</div>
+        </div>
+
+        <!-- AI 回應 -->
+        <div style="margin-bottom:6px;">
+          <div style="font-size:11px;color:var(--text-dim);">AI 回應：</div>
+          <div id="lastAIResponse" style="color:var(--text);font-size:12px;">—</div>
+          <div id="lastEmotion" style="font-size:11px;color:var(--text-dim);">—</div>
+        </div>
+
+        <!-- 手動輸入（備用） -->
+        <div style="display:flex;gap:4px;">
+          <input type="text" id="voiceTextInput" placeholder="手動輸入..."
+                 style="flex:1;padding:4px 8px;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--panel-border);border-radius:3px;outline:none;"
+                 onkeydown="if(event.key==='Enter' && !event.isComposing){sendVoiceText();}">
+          <button class="btn-sm" onclick="sendVoiceText()">發送</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 行事曆 -->
     <div class="panel-section" id="calendar-section">
       <h3>行事曆</h3>
@@ -1434,6 +1477,10 @@ updateUI = function(state) {
   if (state.conversation) {
     updateConversationPanel(state.conversation);
   }
+  // 更新語音面板
+  if (state.voice) {
+    updateVoicePanel(state.voice);
+  }
 
   if (!state.robot) return;
   const r = state.robot;
@@ -1598,7 +1645,82 @@ function updateProactivePanel(proactive) {
 
 function updateConversationPanel(conversation) {
   // 對話面板由 chat history API 驅動，此處僅做輕量指示更新
+  // 更新語音面板的 AI 回應顯示
+  if (conversation.last_response) {
+    document.getElementById('lastAIResponse').textContent = conversation.last_response;
+  }
+  if (conversation.last_emotion) {
+    document.getElementById('lastEmotion').textContent = '情緒: ' + conversation.last_emotion;
+  } else {
+    document.getElementById('lastEmotion').textContent = '—';
+  }
 }
+
+// ── 語音對話面板 ──────────────────────────────────────────────────
+function updateVoicePanel(v) {
+  const statusEl = document.getElementById('voiceStatus');
+  const indicator = document.getElementById('voiceIndicator');
+  const statusMap = {
+    'idle':       {text: '閒置',     color: '#888'},
+    'listening':  {text: '監聽中...', color: '#4CAF50'},
+    'processing': {text: '處理中...', color: '#FF9800'},
+    'speaking':   {text: '說話中...', color: '#2196F3'},
+  };
+  const s = statusMap[v.status] || statusMap.idle;
+  statusEl.textContent = s.text;
+  indicator.style.background = s.color;
+
+  if (v.last_transcript) {
+    document.getElementById('lastTranscript').textContent = v.last_transcript;
+  }
+
+  // 同步按鈕狀態
+  const listening = v.is_listening || false;
+  document.getElementById('btnStartVoice').disabled = listening;
+  document.getElementById('btnStopVoice').disabled = !listening;
+}
+
+window.startVoice = async function() {
+  try {
+    const r = await fetch('/api/voice/start', {method: 'POST'});
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('btnStartVoice').disabled = true;
+      document.getElementById('btnStopVoice').disabled = false;
+    }
+  } catch (err) {
+    console.error('voice start error:', err);
+  }
+};
+
+window.stopVoice = async function() {
+  try {
+    const r = await fetch('/api/voice/stop', {method: 'POST'});
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('btnStartVoice').disabled = false;
+      document.getElementById('btnStopVoice').disabled = true;
+    }
+  } catch (err) {
+    console.error('voice stop error:', err);
+  }
+};
+
+window.sendVoiceText = async function() {
+  const input = document.getElementById('voiceTextInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  try {
+    await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: text}),
+    });
+  } catch (err) {
+    console.error('voice text send error:', err);
+  }
+};
 
 // 更新 proactive 設定
 document.getElementById('btn-proactive-update').addEventListener('click', async () => {

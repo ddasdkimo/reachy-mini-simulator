@@ -43,6 +43,15 @@
 | 39 | QA: WebSocket state field verification | 5D | qa | OK | - | - | v0.5 |
 | 40 | QA: Regression (all 296 original tests pass) | 5D | qa | OK | - | - | v0.5 |
 | 41 | real_robot.py SDK API 對齊（v1.3.0） | 6A | api-engineer | OK | OK | OK | v0.6 |
+| 42 | TTSEngine robot speaker 支援 | 7A | lead-engineer | OK | OK | OK | v0.7 |
+| 43 | Web 語音對話 REST API (start/stop/status) | 7B | lead-engineer | OK | OK | OK | v0.7 |
+| 44 | Web 語音對話 WebSocket state | 7B | lead-engineer | OK | OK | OK | v0.7 |
+| 45 | Web 前端語音控制面板 UI | 7B | lead-engineer | OK | OK | OK | v0.7 |
+| 46 | AudioInput + TTS 管線整合 | 7C | lead-engineer | OK | OK | OK | v0.7 |
+| 47 | TTS on_speak_start/end 回呼 + 迴聲防護 | 7C | lead-engineer | OK | OK | OK | v0.7 |
+| 48 | QA: 語音 API 測試 (7 tests) | 7D | qa | OK | - | - | v0.7 |
+| 49 | QA: TTS real mode 測試 (13 tests) | 7D | qa | OK | - | - | v0.7 |
+| 50 | QA: 回歸測試 (all 353 tests pass) | 7D | qa | OK | - | - | v0.7 |
 
 ## Legend
 

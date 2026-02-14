@@ -1,8 +1,8 @@
 """語音輸出引擎 - 透過 OpenAI TTS API 將文字轉為語音並播放。
 
 支援兩種播放模式：
-1. sounddevice 直接播放（預設）
-2. 透過 MockMedia / RealMedia 介面播放
+1. sounddevice 直接播放（預設，robot=None）
+2. 透過 RobotInterface.media 推送到機器人喇叭（robot 不為 None）
 
 所有外部依賴（openai, sounddevice, numpy）皆為 optional import，
 未安裝或無 API key 時優雅降級為僅記錄文字。
@@ -62,28 +62,45 @@ class TTSEngine:
 
     def __init__(
         self,
+        robot=None,
         api_key: str | None = None,
         *,
         model: str = TTS_MODEL,
         voice: str = TTS_VOICE,
         speed: float = TTS_SPEED,
         output_sample_rate: int = DEFAULT_OUTPUT_SAMPLE_RATE,
+        on_speak_start: Callable[[], None] | None = None,
+        on_speak_end: Callable[[], None] | None = None,
     ) -> None:
         """初始化 TTS 引擎。
 
         Args:
+            robot: RobotInterface 實例。不為 None 時透過機器人喇叭播放，
+                   為 None 時使用 sounddevice 直接播放。
             api_key: OpenAI API 金鑰。若為 None 則從環境變數
                      OPENAI_API_KEY 讀取。
             model: OpenAI TTS 模型名稱。
             voice: TTS 語音選項。
             speed: 語音速度倍率。
             output_sample_rate: 輸出音訊取樣率（Hz）。
+            on_speak_start: 開始播放語音時的回呼。
+            on_speak_end: 播放語音結束時的回呼。
         """
+        self._robot = robot
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._model = model
         self._voice = voice
         self._speed = speed
         self._output_sample_rate = output_sample_rate
+
+        # 若有 robot，從 SDK 取得實際 sample rate
+        self._robot_sample_rate: int = output_sample_rate
+        if robot is not None:
+            try:
+                self._robot_sample_rate = robot.media.get_output_audio_samplerate()
+            except Exception:
+                logger.warning("無法從 robot.media 取得取樣率，使用預設 %d", output_sample_rate)
+                self._robot_sample_rate = output_sample_rate
 
         # OpenAI client（延遲初始化）
         self._client = None
@@ -94,10 +111,10 @@ class TTSEngine:
         self._thread: threading.Thread | None = None
 
         # 回呼
-        self.on_speak_start: Callable[[], None] | None = None
+        self.on_speak_start: Callable[[], None] | None = on_speak_start
         """開始播放語音時的回呼。"""
 
-        self.on_speak_end: Callable[[], None] | None = None
+        self.on_speak_end: Callable[[], None] | None = on_speak_end
         """播放語音結束時的回呼。"""
 
         # 可用性判斷
@@ -178,6 +195,10 @@ class TTSEngine:
     def _synthesize_and_play(self, text: str) -> None:
         """呼叫 OpenAI TTS API 並播放音訊。
 
+        根據 robot 參數決定播放方式：
+        - robot 不為 None：重新取樣後透過 robot.media 推送到機器人喇叭
+        - robot 為 None：透過 sounddevice 直接播放
+
         Args:
             text: 要合成的文字。
         """
@@ -198,14 +219,28 @@ class TTSEngine:
         samples_int16 = np.frombuffer(pcm_bytes, dtype=np.int16)
         samples_float = samples_int16.astype(np.float32) / 32768.0
 
-        # 若需要重新取樣
-        if TTS_SAMPLE_RATE != self._output_sample_rate:
-            samples_float = self._resample(
-                samples_float, TTS_SAMPLE_RATE, self._output_sample_rate
+        if self._robot is not None:
+            # ── Real 模式：推送到機器人喇叭 ──
+            # 重新取樣至機器人 sample rate
+            resampled = self._resample(
+                samples_float, TTS_SAMPLE_RATE, self._robot_sample_rate
             )
-
-        # 播放音訊
-        self._play_audio(samples_float)
+            chunk_size = self._robot_sample_rate // 10  # 100ms per chunk
+            self._robot.media.start_playing()
+            try:
+                for i in range(0, len(resampled), chunk_size):
+                    chunk = resampled[i : i + chunk_size].astype(np.float32)
+                    self._robot.media.push_audio_sample(chunk)
+            finally:
+                self._robot.media.stop_playing()
+        else:
+            # ── Mock 模式：用 sounddevice 播放 ──
+            # 若需要重新取樣
+            if TTS_SAMPLE_RATE != self._output_sample_rate:
+                samples_float = self._resample(
+                    samples_float, TTS_SAMPLE_RATE, self._output_sample_rate
+                )
+            self._play_audio(samples_float)
 
     def _play_audio(self, samples) -> None:
         """透過 sounddevice 播放音訊。

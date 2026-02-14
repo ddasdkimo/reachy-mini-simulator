@@ -9,6 +9,9 @@ REST API:
     GET  /api/events   - 事件日誌
     POST /api/navigate - 導航到指定位置
     POST /api/speak    - 模擬說話輸入
+    POST /api/voice/start  - 啟動語音監聽
+    POST /api/voice/stop   - 停止語音監聽
+    GET  /api/voice/status - 語音狀態
 
 WebSocket:
     /ws - 即時推送機器人位置、事件、狀態更新
@@ -27,6 +30,7 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import math
+import os
 import threading
 import time
 from typing import Any
@@ -48,6 +52,7 @@ except ImportError:
 
 from .ai_brain import AIBrain, BrainResponse
 from .expression import ExpressionEngine
+from .robot_interface import RobotInterface
 from .mock_robot import MockReachyMini
 from .person_detector import MockPersonDetector, PersonDetectorInterface, create_person_detector
 from .proactive import ProactiveTrigger
@@ -57,10 +62,23 @@ from .navigation import Navigator, a_star, create_default_patrol
 from .calendar_mock import CalendarMock
 from .motion import Move
 
+try:
+    from .audio_input import AudioInput
+    _HAS_AUDIO_INPUT = True
+except ImportError:
+    _HAS_AUDIO_INPUT = False
+
+try:
+    from .tts_engine import TTSEngine
+    _HAS_TTS = True
+except ImportError:
+    _HAS_TTS = False
+
 # ── 全域模擬器狀態 ────────────────────────────────────────────
 
 _office_map: OfficeMap | None = None
-_robot: MockReachyMini | None = None
+_robot: RobotInterface | None = None
+_robot_mode: str = "mock"  # "mock" 或 "real"
 _scenario: ScenarioEngine | None = None
 _navigator: Navigator | None = None
 _calendar: CalendarMock | None = None
@@ -77,6 +95,12 @@ _last_trigger_type: str | None = None
 _last_trigger_time: float | None = None
 _last_brain_response: BrainResponse | None = None
 _chat_history: list[dict[str, Any]] = []
+
+# 語音對話管線
+_audio_input: Any = None  # AudioInput instance
+_tts: Any = None  # TTSEngine instance
+_voice_status: str = "idle"  # "idle" | "listening" | "processing" | "speaking"
+_last_transcript: str | None = None
 
 # 模擬時間參數
 _OFFICE_START_MINUTES = 8 * 60 + 50  # 08:50
@@ -206,20 +230,43 @@ def _handle_scenario_event(event: SimEvent) -> None:
 
 
 def _init_simulation() -> None:
-    """初始化模擬器各模組。"""
-    global _office_map, _robot, _scenario, _navigator, _calendar
+    """初始化模擬器各模組。
+
+    根據環境變數 REACHY_MODE 決定使用 mock 或 real 模式：
+    - mock（預設）：使用 MockReachyMini，包含完整模擬（地圖/導航/場景）
+    - real：連接真實 Reachy Mini 機器人，跳過模擬器專屬邏輯
+    """
+    global _office_map, _robot, _robot_mode, _scenario, _navigator, _calendar
     global _brain, _expression, _event_log
     global _detector, _proactive
     global _last_trigger_type, _last_trigger_time, _last_brain_response, _chat_history
+    global _audio_input, _tts, _voice_status, _last_transcript
 
-    _office_map = create_default_office()
-    charger = _office_map.get_location("充電站")
-    _robot = MockReachyMini(
-        position=(float(charger.position[0]), float(charger.position[1])),
-        speed=3.0,
-    )
+    _robot_mode = os.environ.get("REACHY_MODE", "mock").lower()
+
+    if _robot_mode == "real":
+        # ── Real 模式：連接真實機器人 ──
+        try:
+            from .factory import create_robot
+            _robot = create_robot(mode="real")
+            _robot.wake_up()
+            logger.info("已連接真實 Reachy Mini 機器人")
+        except Exception as e:
+            logger.error("無法連接真實機器人: %s，退回 mock 模式", e)
+            _robot_mode = "mock"
+
+    if _robot_mode == "mock":
+        # ── Mock 模式：完整模擬 ──
+        _office_map = create_default_office()
+        charger = _office_map.get_location("充電站")
+        _robot = MockReachyMini(
+            position=(float(charger.position[0]), float(charger.position[1])),
+            speed=3.0,
+        )
+
     _scenario = ScenarioEngine()
-    _navigator = Navigator(_office_map)
+    if _robot_mode == "mock" and _office_map:
+        _navigator = Navigator(_office_map)
     _calendar = CalendarMock()
     _brain = AIBrain()
     _expression = ExpressionEngine()
@@ -260,6 +307,9 @@ def _init_simulation() -> None:
         })
         if resp.emotion and _expression:
             _expression.trigger_emotion(resp.emotion)
+        # TTS 播放
+        if _tts and resp.text:
+            _tts.speak(resp.text)
         if resp.nav_target and _navigator and _robot:
             success = _navigator.navigate_to(resp.nav_target, from_pos=_robot.position)
             if success:
@@ -286,6 +336,57 @@ def _init_simulation() -> None:
     _scenario.set_speed(1.0)
     _scenario.start()
 
+    # ── 語音對話管線 ──
+    _voice_status = "idle"
+    _last_transcript = None
+
+    if _HAS_TTS:
+        if _robot_mode == "real":
+            _tts = TTSEngine(robot=_robot)
+        else:
+            _tts = TTSEngine()
+
+        def _on_speak_start():
+            global _voice_status
+            _voice_status = "speaking"
+            if _expression:
+                _expression.set_state("SPEAKING")
+            if _audio_input:
+                _audio_input.paused = True  # 避免迴聲
+
+        def _on_speak_end():
+            global _voice_status
+            _voice_status = "listening" if (_audio_input and not _audio_input._stop.is_set()) else "idle"
+            if _expression:
+                _expression.set_state("IDLE")
+            if _audio_input:
+                _audio_input.paused = False
+
+        _tts.on_speak_start = _on_speak_start
+        _tts.on_speak_end = _on_speak_end
+        _tts.start()
+
+    if _HAS_AUDIO_INPUT:
+        def _handle_transcript(text: str) -> None:
+            global _voice_status, _last_transcript
+            _last_transcript = text
+            _voice_status = "processing"
+            if _expression:
+                _expression.set_state("PROCESSING")
+            _add_event(f"語音辨識: {text}", "user")
+            # 記錄到對話歷史
+            _chat_history.append({
+                "role": "user",
+                "text": text,
+                "name": "使用者(語音)",
+                "time": time.time(),
+            })
+            # 注入 AI Brain
+            if _brain:
+                _brain.handle_event("user_speaks", {"name": "使用者", "text": text})
+
+        _audio_input = AudioInput(on_transcript=_handle_transcript)
+
     _add_event("系統啟動...", "system")
     logger.info("模擬器初始化完成")
 
@@ -296,15 +397,44 @@ def _simulation_loop() -> None:
 
     _sim_running = True
     while _sim_running:
-        if not _paused and _scenario and _robot and _navigator and _calendar:
+        if not _paused and _robot:
             with _sim_lock:
                 effective_dt = _SIM_DT * _speed_multiplier
-                _scenario.tick(effective_dt)
 
-                office_min = _sim_to_office_minutes(_scenario.current_time)
-                _calendar.set_current_time(office_min)
+                if _robot_mode == "mock":
+                    # ── Mock 模式專屬邏輯 ──
+                    if _scenario:
+                        _scenario.tick(effective_dt)
+                    if _scenario and _calendar:
+                        office_min = _sim_to_office_minutes(_scenario.current_time)
+                        _calendar.set_current_time(office_min)
+                    if _navigator:
+                        _navigator.update(effective_dt, _robot)
 
-                _navigator.update(effective_dt, _robot)
+                    # Mock 專屬：插值引擎 / 動作播放 / 錄製
+                    if hasattr(_robot, '_interp_engine'):
+                        interp_result = _robot._interp_engine.tick(effective_dt)
+                        if interp_result:
+                            _robot.set_target(**interp_result)
+                    if hasattr(_robot, '_motion_player'):
+                        _robot._motion_player.tick(effective_dt, _robot)
+                    if hasattr(_robot, '_motion_recorder') and _robot._motion_recorder.is_recording:
+                        _robot._motion_recorder.capture(_robot)
+
+                    # 天線呼吸動畫（Mock 模式）
+                    no_anim = (
+                        hasattr(_robot, '_interp_engine') and not _robot._interp_engine.is_active
+                        and hasattr(_robot, '_motion_player') and not _robot._motion_player.is_playing
+                    )
+                    if no_anim:
+                        t = _scenario.current_time if _scenario else 0
+                        breath = 0.15 * math.sin(2 * math.pi * 0.3 * t)
+                        if _navigator and _navigator.is_navigating:
+                            _robot.set_target(antennas=[0.3 + breath, 0.3 + breath])
+                        else:
+                            _robot.set_target(antennas=[breath, breath])
+
+                # ── 共通邏輯（mock + real 都執行）──
 
                 # 更新人物偵測
                 if _detector and _detector.is_running:
@@ -314,65 +444,58 @@ def _simulation_loop() -> None:
                 if _proactive and _proactive.is_running:
                     _proactive.update(effective_dt)
 
-                # 插值引擎 tick
-                interp_result = _robot._interp_engine.tick(effective_dt)
-                if interp_result:
-                    _robot.set_target(**interp_result)
-
-                # 動作回放 tick
-                _robot._motion_player.tick(effective_dt, _robot)
-
-                # 動作錄製：擷取當前幀
-                if _robot._motion_recorder.is_recording:
-                    _robot._motion_recorder.capture(_robot)
-
-                # 天線呼吸動畫（僅在無插值/動作播放時）
-                if not _robot._interp_engine.is_active and not _robot._motion_player.is_playing:
-                    t = _scenario.current_time
-                    breath = 0.15 * math.sin(2 * math.pi * 0.3 * t)
-                    if _navigator.is_navigating:
-                        _robot.set_target(antennas=[0.3 + breath, 0.3 + breath])
-                    else:
-                        _robot.set_target(antennas=[breath, breath])
+                # 表情引擎（real 模式也套用）
+                if _expression and _robot:
+                    _expression.update(_robot)
 
         time.sleep(0.15)
 
 
 def _get_full_state() -> dict[str, Any]:
     """取得完整的模擬器狀態快照（供 WebSocket 推送用）。"""
-    if not _robot or not _scenario or not _navigator or not _calendar:
+    if not _robot:
         return {}
 
     state = _robot.get_state_summary()
-    office_min = _sim_to_office_minutes(_scenario.current_time)
 
+    # Mock 模式專屬資料
+    office_min = 0
     persons = {}
-    for name, person in _scenario.persons.items():
-        if person.is_visible:
-            persons[name] = {
-                "position": list(person.position),
-                "is_visible": True,
-            }
-
     nav_path = []
-    if _navigator.is_navigating:
-        nav_path = [list(p) for p in _navigator.remaining_path]
+
+    if _robot_mode == "mock" and _scenario and _navigator and _calendar:
+        office_min = _sim_to_office_minutes(_scenario.current_time)
+        for name, person in _scenario.persons.items():
+            if person.is_visible:
+                persons[name] = {
+                    "position": list(person.position),
+                    "is_visible": True,
+                }
+        if _navigator.is_navigating:
+            nav_path = [list(p) for p in _navigator.remaining_path]
 
     current_meeting = _calendar.get_current()
     next_meeting = _calendar.get_next()
 
-    return {
-        "robot": {
-            "position": list(state["position"]),
-            "heading": state["heading"],
-            "antenna_pos": state["antenna_pos"],
-            "antenna_pos_deg": state["antenna_pos_deg"],
-            "head_yaw_deg": state["head_yaw_deg"],
-            "head_pitch_deg": state["head_pitch_deg"],
-            "body_yaw_deg": state["body_yaw_deg"],
-            "is_moving": state["is_moving"],
-            "move_target": list(state["move_target"]) if state["move_target"] else None,
-            "is_awake": _robot.is_awake,
+    # 機器人狀態（相容 mock / real）
+    robot_state = {
+        "mode": _robot_mode,
+        "is_awake": _robot.is_awake,
+        "imu": _robot.get_imu_data(),
+        "joints": _robot.get_current_joint_positions(),
+    }
+
+    if _robot_mode == "mock":
+        robot_state.update({
+            "position": list(state.get("position", (0, 0))),
+            "heading": state.get("heading", 0),
+            "antenna_pos": state.get("antenna_pos", [0, 0]),
+            "antenna_pos_deg": state.get("antenna_pos_deg", [0, 0]),
+            "head_yaw_deg": state.get("head_yaw_deg", 0),
+            "head_pitch_deg": state.get("head_pitch_deg", 0),
+            "body_yaw_deg": state.get("body_yaw_deg", 0),
+            "is_moving": state.get("is_moving", False),
+            "move_target": list(state["move_target"]) if state.get("move_target") else None,
             "motor_states": {
                 name: _robot.is_motor_enabled(name)
                 for name in ["head_roll", "head_pitch", "head_yaw", "antenna_right", "antenna_left", "body_yaw"]
@@ -381,21 +504,32 @@ def _get_full_state() -> dict[str, Any]:
             "is_recording": _robot.media.is_recording,
             "is_sound_playing": _robot.media.is_sound_playing(),
             "is_motion_playing": _robot.is_motion_playing,
-            "imu": _robot.get_imu_data(),
-            "joints": _robot.get_current_joint_positions(),
-        },
-        "nav_target": _navigator.current_target,
-        "nav_path": nav_path,
-        "persons": persons,
-        "time": {
+        })
+    else:
+        # Real 模式：從 SDK 直接讀取
+        robot_state.update({
+            "antenna_pos": list(_robot.antenna_pos),
+            "head_pose": _robot.head_pose.tolist() if hasattr(_robot.head_pose, 'tolist') else _robot.head_pose,
+            "body_yaw": _robot.body_yaw,
+            "is_moving": state.get("is_moving", False),
+        })
+
+    # 導航和時間（mock 專屬）
+    nav_target = None
+    time_info = {"speed": _speed_multiplier, "paused": _paused}
+    calendar_info = {}
+
+    if _robot_mode == "mock" and _scenario and _navigator and _calendar:
+        nav_target = _navigator.current_target
+        current_meeting = _calendar.get_current()
+        next_meeting = _calendar.get_next()
+        time_info.update({
             "office_time": _office_minutes_str(office_min),
             "office_minutes": office_min,
             "sim_time": _scenario.current_time,
-            "speed": _speed_multiplier,
-            "paused": _paused,
             "finished": _scenario.is_finished and not _navigator.is_navigating,
-        },
-        "calendar": {
+        })
+        calendar_info = {
             "current": str(current_meeting) if current_meeting else None,
             "next": str(next_meeting) if next_meeting else None,
             "meetings": [
@@ -408,7 +542,15 @@ def _get_full_state() -> dict[str, Any]:
                 }
                 for m in _calendar.meetings
             ],
-        },
+        }
+
+    return {
+        "robot": robot_state,
+        "nav_target": nav_target,
+        "nav_path": nav_path,
+        "persons": persons,
+        "time": time_info,
+        "calendar": calendar_info,
         "perception": {
             "mode": "mock" if isinstance(_detector, MockPersonDetector) else "yolo" if _detector else "none",
             "person_visible": _detector.person_visible if _detector else False,
@@ -428,6 +570,11 @@ def _get_full_state() -> dict[str, Any]:
             "last_emotion": _last_brain_response.emotion if _last_brain_response else None,
             "history_count": len(_chat_history),
         },
+        "voice": {
+            "status": _voice_status,
+            "is_listening": (not _audio_input._stop.is_set() and _audio_input._vad_thread is not None and _audio_input._vad_thread.is_alive()) if _audio_input and hasattr(_audio_input, '_stop') else False,
+            "last_transcript": _last_transcript,
+        },
     }
 
 
@@ -446,6 +593,10 @@ async def _lifespan(application: FastAPI):
     # 關閉
     global _sim_running
     _sim_running = False
+    if _tts:
+        _tts.stop()
+    if _audio_input:
+        _audio_input.stop()
     if _proactive:
         _proactive.stop()
     if _detector:
@@ -952,6 +1103,46 @@ async def send_chat(data: dict[str, Any]) -> dict[str, Any]:
 async def get_chat_history() -> dict[str, Any]:
     """回傳對話歷史。"""
     return {"history": list(_chat_history[-100:])}
+
+
+# ── 語音對話 REST API ────────────────────────────────────────────
+
+@app.post("/api/voice/start")
+async def voice_start():
+    """啟動語音監聽。"""
+    global _voice_status
+    if not _HAS_AUDIO_INPUT or not _audio_input:
+        return {"success": False, "error": "AudioInput 未安裝"}
+    _audio_input.start()
+    _voice_status = "listening"
+    if _expression:
+        _expression.set_state("LISTENING")
+    return {"success": True, "status": "listening"}
+
+
+@app.post("/api/voice/stop")
+async def voice_stop():
+    """停止語音監聽。"""
+    global _voice_status
+    if _audio_input:
+        _audio_input.stop()
+    _voice_status = "idle"
+    if _expression:
+        _expression.set_state("IDLE")
+    return {"success": True, "status": "idle"}
+
+
+@app.get("/api/voice/status")
+async def voice_status():
+    """取得語音狀態。"""
+    return {
+        "status": _voice_status,
+        "is_listening": (not _audio_input._stop.is_set() and _audio_input._vad_thread is not None and _audio_input._vad_thread.is_alive()) if _audio_input and hasattr(_audio_input, '_stop') else False,
+        "is_speaking": not _tts._stop.is_set() and not _tts._queue.empty() if _tts and hasattr(_tts, '_stop') else False,
+        "last_transcript": _last_transcript,
+        "has_audio_input": _HAS_AUDIO_INPUT,
+        "has_tts": _HAS_TTS,
+    }
 
 
 # ── WebSocket ────────────────────────────────────────────────────
