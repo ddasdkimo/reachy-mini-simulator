@@ -161,6 +161,10 @@ class RealReachyMini(RobotInterface):
         chassis: ChassisInterface | None = None,
     ) -> None:
         self._sdk = sdk_robot
+
+        # 自動把 sounddevice 輸出裝置切到 Reachy Mini Audio
+        self._set_reachy_audio_output()
+
         self._media = RealMedia(sdk_robot.media)
         self._chassis = chassis
 
@@ -181,6 +185,20 @@ class RealReachyMini(RobotInterface):
             logger.info("RealReachyMini 已初始化（使用 %s 底盤）", type(chassis).__name__)
         else:
             logger.info("RealReachyMini 已初始化（底盤移動為 stub）")
+
+    @staticmethod
+    def _set_reachy_audio_output() -> None:
+        """自動尋找 Reachy Mini Audio 裝置並設為 sounddevice 預設輸出。"""
+        try:
+            import sounddevice as sd
+            for i, d in enumerate(sd.query_devices()):
+                if "Reachy Mini" in d["name"] and d["max_output_channels"] > 0:
+                    sd.default.device = (sd.default.device[0], i)
+                    logger.info("音訊輸出裝置已切換至: [%d] %s", i, d["name"])
+                    return
+            logger.warning("未找到 Reachy Mini Audio 輸出裝置，使用系統預設")
+        except ImportError:
+            pass
 
     @property
     def position(self) -> tuple[float, float]:

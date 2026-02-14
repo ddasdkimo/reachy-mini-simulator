@@ -1,16 +1,20 @@
-"""語音輸入管線 - 麥克風擷取 + Silero VAD + faster-whisper STT。
+"""語音輸入管線 - 麥克風擷取 + 能量 VAD + OpenAI Whisper API STT。
 
-從麥克風擷取音訊，透過 Silero VAD 偵測說話段落，
-再以 faster-whisper 進行語音轉文字，最後透過回呼函式傳出辨識結果。
+從麥克風擷取音訊，透過能量偵測判斷說話段落，
+再以 OpenAI Whisper API 進行語音轉文字，最後透過回呼函式傳出辨識結果。
 
-所有外部依賴（sounddevice, torch, faster-whisper）皆為 optional import，
-未安裝時模組仍可被 import，但 start() 會記錄警告並跳過。
+依賴：
+- numpy + sounddevice：麥克風擷取與 VAD（必要）
+- openai：雲端 STT（必要，需 OPENAI_API_KEY）
 """
 
 from __future__ import annotations
 
+import io
 import logging
+import os
 import queue
+import struct
 import threading
 import time
 from typing import Callable
@@ -31,33 +35,23 @@ except ImportError:
     logger.warning("sounddevice 未安裝，麥克風擷取無法使用")
 
 try:
-    import torch
+    from openai import OpenAI
 except ImportError:
-    torch = None  # type: ignore[assignment]
-    logger.warning("torch 未安裝，Silero VAD 無法使用")
-
-_faster_whisper_available = False
-try:
-    from faster_whisper import WhisperModel  # noqa: F401
-    _faster_whisper_available = True
-except ImportError:
-    logger.warning("faster-whisper 未安裝，語音轉文字無法使用")
+    OpenAI = None  # type: ignore[assignment,misc]
+    logger.warning("openai 未安裝，Whisper API 無法使用")
 
 # ── 預設設定 ─────────────────────────────────────────────────
 MIC_SAMPLE_RATE = 16000
 MIC_CHANNELS = 1
 MIC_BLOCK_SIZE = 512  # 每次回呼的 samples 數（~32ms @ 16kHz）
-VAD_THRESHOLD = 0.5
-SILENCE_TIMEOUT = 1.0  # 靜音超過此秒數視為說話結束
-MIN_SPEECH_DURATION = 0.3  # 最短語音段落秒數
-WHISPER_MODEL_SIZE = "medium"
-WHISPER_COMPUTE_TYPE = "int8"
+ENERGY_THRESHOLD = 0.015  # RMS 能量門檻（浮點 -1~1 範圍）
+SILENCE_TIMEOUT = 1.2  # 靜音超過此秒數視為說話結束
+MIN_SPEECH_DURATION = 0.4  # 最短語音段落秒數
 WHISPER_LANGUAGE = "zh"
-WHISPER_BEAM_SIZE = 5
 
 
 class AudioInput:
-    """麥克風語音輸入管線：擷取 → VAD → STT → 文字回呼。
+    """麥克風語音輸入管線：擷取 → 能量 VAD → OpenAI Whisper API → 文字回呼。
 
     用法::
 
@@ -77,13 +71,11 @@ class AudioInput:
         sample_rate: int = MIC_SAMPLE_RATE,
         channels: int = MIC_CHANNELS,
         block_size: int = MIC_BLOCK_SIZE,
-        vad_threshold: float = VAD_THRESHOLD,
+        energy_threshold: float = ENERGY_THRESHOLD,
         silence_timeout: float = SILENCE_TIMEOUT,
         min_speech_duration: float = MIN_SPEECH_DURATION,
-        whisper_model_size: str = WHISPER_MODEL_SIZE,
-        whisper_compute_type: str = WHISPER_COMPUTE_TYPE,
         whisper_language: str = WHISPER_LANGUAGE,
-        whisper_beam_size: int = WHISPER_BEAM_SIZE,
+        api_key: str | None = None,
     ) -> None:
         """初始化語音輸入管線。
 
@@ -92,13 +84,11 @@ class AudioInput:
             sample_rate: 麥克風取樣率（Hz）。
             channels: 麥克風聲道數。
             block_size: 每次音訊回呼的樣本數。
-            vad_threshold: VAD 語音偵測門檻（0~1）。
+            energy_threshold: RMS 能量門檻，高於此值視為有語音。
             silence_timeout: 靜音多久後視為說話結束（秒）。
             min_speech_duration: 最短語音段落長度（秒）。
-            whisper_model_size: Whisper 模型大小。
-            whisper_compute_type: Whisper 計算精度。
             whisper_language: Whisper 辨識語言。
-            whisper_beam_size: Whisper beam search 大小。
+            api_key: OpenAI API 金鑰。若為 None 則從 OPENAI_API_KEY 讀取。
         """
         self.on_transcript = on_transcript
 
@@ -108,15 +98,13 @@ class AudioInput:
         self._block_size = block_size
 
         # VAD 參數
-        self._vad_threshold = vad_threshold
+        self._energy_threshold = energy_threshold
         self._silence_timeout = silence_timeout
         self._min_speech_duration = min_speech_duration
 
         # Whisper 參數
-        self._whisper_model_size = whisper_model_size
-        self._whisper_compute_type = whisper_compute_type
         self._whisper_language = whisper_language
-        self._whisper_beam_size = whisper_beam_size
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
 
         # 內部佇列與執行緒
         self._stt_queue: queue.Queue = queue.Queue()
@@ -133,16 +121,27 @@ class AudioInput:
         # 暫停旗標（TTS 播放時暫停以避免迴聲）
         self.paused = False
 
-        # VAD 模型（延遲載入）
-        self._vad_model = None
-
-        # Whisper 模型（延遲載入）
-        self._whisper_model = None
+        # OpenAI client（延遲初始化）
+        self._client = None
 
         # 可用性
-        self._available = all([np is not None, sd is not None, torch is not None])
+        self._available = all([
+            np is not None,
+            sd is not None,
+            OpenAI is not None,
+            bool(self._api_key),
+        ])
         if not self._available:
-            logger.warning("語音輸入管線缺少必要依賴，start() 將不會啟動")
+            missing = []
+            if np is None:
+                missing.append("numpy")
+            if sd is None:
+                missing.append("sounddevice")
+            if OpenAI is None:
+                missing.append("openai")
+            if not self._api_key:
+                missing.append("OPENAI_API_KEY")
+            logger.warning("語音輸入管線缺少: %s", ", ".join(missing))
 
     @property
     def available(self) -> bool:
@@ -155,27 +154,56 @@ class AudioInput:
             logger.warning("語音輸入管線缺少必要依賴，無法啟動")
             return
 
-        # 載入 VAD 模型
-        if self._vad_model is None:
-            try:
-                logger.info("載入 Silero VAD 模型...")
-                self._vad_model, _ = torch.hub.load(
-                    repo_or_dir="snakers4/silero-vad",
-                    model="silero_vad",
-                    trust_repo=True,
-                )
-                self._vad_model.eval()
-                logger.info("Silero VAD 模型載入完成")
-            except Exception:
-                logger.exception("Silero VAD 模型載入失敗")
-                return
+        # 若已在執行，先停止再重啟
+        if self._vad_thread and self._vad_thread.is_alive():
+            logger.warning("語音輸入管線已在執行中，先停止再重啟")
+            self.stop()
+
+        # 自動噪音校正
+        self._calibrate_noise_floor()
 
         self._stop.clear()
+        self._speech_active = False
+        self._audio_buffer = []
+        self._silence_start = 0.0
         self._vad_thread = threading.Thread(target=self._vad_loop, daemon=True)
         self._stt_thread = threading.Thread(target=self._stt_loop, daemon=True)
         self._vad_thread.start()
         self._stt_thread.start()
-        logger.info("語音輸入管線已啟動")
+        logger.warning(
+            "語音輸入管線已啟動（能量 VAD + OpenAI Whisper API, 門檻=%.4f）",
+            self._energy_threshold,
+        )
+
+    def _calibrate_noise_floor(self) -> None:
+        """錄製 1 秒環境音，自動設定 VAD 門檻為噪音底 × 3。"""
+        rms_values: list[float] = []
+
+        def _cal_callback(indata, frames, time_info, status):
+            audio = indata[:, 0]
+            rms_values.append(float(np.sqrt(np.mean(audio ** 2))))
+
+        try:
+            with sd.InputStream(
+                samplerate=self._sample_rate,
+                channels=self._channels,
+                dtype="float32",
+                blocksize=self._block_size,
+                callback=_cal_callback,
+            ):
+                time.sleep(1.0)
+        except Exception:
+            logger.warning("噪音校正失敗，使用預設門檻")
+            return
+
+        if rms_values:
+            noise_floor = float(np.mean(rms_values))
+            new_threshold = max(noise_floor * 3.0, ENERGY_THRESHOLD)
+            logger.warning(
+                "噪音校正: 底噪=%.4f → 門檻=%.4f（原=%.4f）",
+                noise_floor, new_threshold, self._energy_threshold,
+            )
+            self._energy_threshold = new_threshold
 
     def stop(self) -> None:
         """停止麥克風擷取與語音辨識。"""
@@ -190,7 +218,7 @@ class AudioInput:
     # ── VAD 迴圈 ─────────────────────────────────────────────
 
     def _vad_loop(self) -> None:
-        """從麥克風擷取音訊並偵測語音段落。"""
+        """從麥克風擷取音訊並用能量偵測語音段落。"""
 
         def audio_callback(indata, frames, time_info, status):
             if status:
@@ -207,33 +235,30 @@ class AudioInput:
                 blocksize=self._block_size,
                 callback=audio_callback,
             ):
-                logger.info("麥克風串流已開啟")
+                logger.warning("麥克風串流已開啟")
                 while not self._stop.is_set():
                     self._stop.wait(timeout=0.1)
         except Exception:
             logger.exception("麥克風錯誤")
 
     def _process_vad(self, audio) -> None:
-        """對音訊區塊進行 VAD 處理。
+        """對音訊區塊進行能量 VAD 處理。
+
+        使用 RMS（均方根）能量判斷是否有語音活動。
 
         Args:
             audio: 單聲道浮點音訊陣列。
         """
-        tensor = torch.from_numpy(audio)
-
-        try:
-            speech_prob = self._vad_model(tensor, self._sample_rate).item()
-        except Exception:
-            return
-
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        is_speech = rms >= self._energy_threshold
         now = time.time()
 
-        if speech_prob >= self._vad_threshold:
+        if is_speech:
             if not self._speech_active:
                 self._speech_active = True
                 self._speech_start = now
                 self._audio_buffer = []
-                logger.debug("偵測到語音開始")
+                logger.warning("偵測到語音開始 (RMS=%.4f)", rms)
             self._silence_start = 0.0
             self._audio_buffer.append(audio)
         else:
@@ -247,7 +272,7 @@ class AudioInput:
                     if duration >= self._min_speech_duration:
                         full_audio = np.concatenate(self._audio_buffer)
                         self._stt_queue.put(full_audio)
-                        logger.info("語音段落: %.1f 秒", duration)
+                        logger.warning("語音段落: %.1f 秒", duration)
                     self._speech_active = False
                     self._audio_buffer = []
                     self._silence_start = 0.0
@@ -255,19 +280,8 @@ class AudioInput:
     # ── STT 迴圈 ─────────────────────────────────────────────
 
     def _stt_loop(self) -> None:
-        """使用 faster-whisper 進行語音轉文字。"""
-        if not _faster_whisper_available:
-            logger.warning("faster-whisper 未安裝，STT 迴圈結束")
-            return
-
-        from faster_whisper import WhisperModel
-
-        logger.info("載入 Whisper 模型: %s", self._whisper_model_size)
-        self._whisper_model = WhisperModel(
-            self._whisper_model_size,
-            compute_type=self._whisper_compute_type,
-        )
-        logger.info("Whisper 模型載入完成")
+        """使用 OpenAI Whisper API 進行語音轉文字。"""
+        logger.warning("STT 迴圈啟動（OpenAI Whisper API）")
 
         while not self._stop.is_set():
             try:
@@ -279,16 +293,71 @@ class AudioInput:
                 break
 
             try:
-                segments, _info = self._whisper_model.transcribe(
-                    audio,
-                    language=self._whisper_language,
-                    beam_size=self._whisper_beam_size,
-                    vad_filter=True,
-                )
-                text = "".join(seg.text for seg in segments).strip()
+                text = self._transcribe(audio)
                 if text:
-                    logger.info("STT 辨識結果: %s", text)
+                    logger.warning("STT 辨識結果: %s", text)
                     if self.on_transcript:
                         self.on_transcript(text)
             except Exception:
                 logger.exception("STT 辨識錯誤")
+
+    def _transcribe(self, audio) -> str:
+        """將浮點音訊陣列轉為 WAV 並送到 OpenAI Whisper API。
+
+        Args:
+            audio: float32 numpy 陣列，取樣率為 self._sample_rate。
+
+        Returns:
+            辨識出的文字。
+        """
+        # 延遲初始化 OpenAI client
+        if self._client is None:
+            self._client = OpenAI(api_key=self._api_key)
+
+        # float32 → int16 PCM → WAV bytes
+        wav_bytes = self._audio_to_wav(audio)
+
+        transcript = self._client.audio.transcriptions.create(
+            model="whisper-1",
+            file=("recording.wav", wav_bytes),
+            response_format="text",
+            language=self._whisper_language,
+        )
+        return transcript.strip()
+
+    def _audio_to_wav(self, audio) -> bytes:
+        """將 float32 numpy 陣列轉換為 WAV 格式的 bytes。
+
+        Args:
+            audio: float32 numpy 陣列。
+
+        Returns:
+            WAV 格式的二進位資料。
+        """
+        # float32 [-1, 1] → int16
+        int16_audio = (audio * 32767).astype(np.int16)
+        pcm_bytes = int16_audio.tobytes()
+
+        # 建構 WAV header
+        buf = io.BytesIO()
+        num_samples = len(int16_audio)
+        data_size = num_samples * 2  # 16-bit = 2 bytes per sample
+        # RIFF header
+        buf.write(b"RIFF")
+        buf.write(struct.pack("<I", 36 + data_size))
+        buf.write(b"WAVE")
+        # fmt chunk
+        buf.write(b"fmt ")
+        buf.write(struct.pack("<I", 16))  # chunk size
+        buf.write(struct.pack("<H", 1))   # PCM format
+        buf.write(struct.pack("<H", 1))   # mono
+        buf.write(struct.pack("<I", self._sample_rate))
+        buf.write(struct.pack("<I", self._sample_rate * 2))  # byte rate
+        buf.write(struct.pack("<H", 2))   # block align
+        buf.write(struct.pack("<H", 16))  # bits per sample
+        # data chunk
+        buf.write(b"data")
+        buf.write(struct.pack("<I", data_size))
+        buf.write(pcm_bytes)
+
+        return buf.getvalue()

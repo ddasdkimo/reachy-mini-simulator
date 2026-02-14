@@ -35,6 +35,9 @@ import threading
 import time
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 logger = logging.getLogger(__name__)
 
@@ -294,7 +297,7 @@ def _init_simulation() -> None:
 
     # AI 回應回呼
     def _on_brain_response(resp: BrainResponse) -> None:
-        global _last_brain_response
+        global _last_brain_response, _tts
         _last_brain_response = resp
         emotion_tag = f"[{resp.emotion}]" if resp.emotion else ""
         _add_event(f"Robot: {emotion_tag} {resp.text}", "robot")
@@ -345,6 +348,8 @@ def _init_simulation() -> None:
             _tts = TTSEngine(robot=_robot)
         else:
             _tts = TTSEngine()
+        logger.warning("TTS 初始化: available=%s, api_key_len=%d, robot=%s",
+                        _tts.available, len(_tts._api_key), _tts._robot is not None)
 
         def _on_speak_start():
             global _voice_status

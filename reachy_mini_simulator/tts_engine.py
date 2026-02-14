@@ -180,14 +180,19 @@ class TTSEngine:
             text: 要合成並播放的文字。
         """
         if not self._api_available:
-            logger.info("TTS (文字記錄): %s", text)
+            logger.warning("TTS (降級模式，無 API key): %s", text)
             return
+
+        logger.warning("TTS 開始合成: %s", text[:30])
 
         if self.on_speak_start:
             self.on_speak_start()
 
         try:
             self._synthesize_and_play(text)
+            logger.warning("TTS 合成播放完成")
+        except Exception:
+            logger.exception("TTS _synthesize_and_play 錯誤")
         finally:
             if self.on_speak_end:
                 self.on_speak_end()
@@ -226,11 +231,15 @@ class TTSEngine:
                 samples_float, TTS_SAMPLE_RATE, self._robot_sample_rate
             )
             chunk_size = self._robot_sample_rate // 10  # 100ms per chunk
+            audio_duration = len(resampled) / self._robot_sample_rate
             self._robot.media.start_playing()
             try:
                 for i in range(0, len(resampled), chunk_size):
                     chunk = resampled[i : i + chunk_size].astype(np.float32)
                     self._robot.media.push_audio_sample(chunk)
+                # 等待音訊播完再關閉 stream
+                import time
+                time.sleep(audio_duration + 0.3)
             finally:
                 self._robot.media.stop_playing()
         else:
