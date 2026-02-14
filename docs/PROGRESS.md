@@ -42,6 +42,7 @@
 | 38 | QA: Web API perception endpoints tests | 5D | qa | OK | - | - | v0.5 |
 | 39 | QA: WebSocket state field verification | 5D | qa | OK | - | - | v0.5 |
 | 40 | QA: Regression (all 296 original tests pass) | 5D | qa | OK | - | - | v0.5 |
+| 41 | real_robot.py SDK API 對齊（v1.3.0） | 6A | api-engineer | OK | OK | OK | v0.6 |
 
 ## Legend
 
